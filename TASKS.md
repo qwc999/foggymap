@@ -130,7 +130,7 @@
 
 ## FOG-005 - Конфигурация Источников Карт
 
-**Status:** Todo
+**Status:** Done
 
 **Description:**
 Создать типизированную модель конфигурации map providers: обычные карты, спутниковые слои, attribution, max zoom, tile URL templates и технические заметки по провайдеру.
@@ -145,6 +145,9 @@ Unit-тесты на выбор provider и fallback-поведение.
 
 **Notes:**
 - Эта задача готовит приложение к замене публичных development tile-серверов.
+- Реализовано: typed provider config, режимы `street`/`satellite`, default provider selection и fallback для неизвестного/неподходящего provider id.
+- Satellite provider пока intentional placeholder до FOG-007, чтобы не закреплять юридически спорный или технически слабый источник.
+- Проверено: frontend typecheck/lint/format/test/build/audit через Docker; provider tests покрывают selection и fallback.
 
 ---
 
