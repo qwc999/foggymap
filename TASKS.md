@@ -153,7 +153,7 @@ Unit-тесты на выбор provider и fallback-поведение.
 
 ## FOG-006 - Базовая MapLibre Карта
 
-**Status:** Todo
+**Status:** Done
 
 **Description:**
 Отрисовать полноэкранную MapLibre-карту с pan и zoom. Для первого варианта использовать development street provider.
@@ -169,6 +169,9 @@ Unit-тесты на выбор provider и fallback-поведение.
 
 **Notes:**
 - Начальный центр можно поставить в Москве или нейтральной точке до появления home location.
+- Реализовано: `MapView` на MapLibre GL JS, raster style из provider config, OSM development provider, attribution и navigation controls.
+- Проверено: frontend typecheck/lint/format/test/build/audit через Docker; browser DOM содержит MapLibre canvas и attribution; browser console без warning/error.
+- Vite build предупреждает о крупном chunk из-за MapLibre. Это ожидаемо для карты и не блокирует MVP; code splitting можно сделать позже, если понадобится.
 
 ---
 
