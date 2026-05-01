@@ -1,0 +1,38 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    command: cargo run --bin foggy_map_backend
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: "3000"
+      RUST_LOG: info
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./backend:/app
+      - backend_cargo_registry:/usr/local/cargo/registry
+      - backend_cargo_git:/usr/local/cargo/git
+      - backend_target:/app/target
+      - app_data:/data
+
+  frontend:
+    build:
+      context: ./frontend
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    environment:
+      VITE_BACKEND_URL: http://localhost:3000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  app_data:
+  backend_cargo_registry:
+  backend_cargo_git:
+  backend_target:
+  frontend_node_modules:

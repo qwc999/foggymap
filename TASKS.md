@@ -56,7 +56,7 @@
 
 ## FOG-002 - Docker Compose Скелет Приложения
 
-**Status:** Todo
+**Status:** Done
 
 **Description:**
 Создать Docker-first структуру приложения в существующей папке проекта: frontend-контейнер с React + TypeScript + Vite и backend-контейнер с Rust HTTP API. Все зависимости должны устанавливаться внутри Docker image/volume, а не на host.
@@ -74,6 +74,9 @@
 **Notes:**
 - Desktop-окна Tauri в MVP не будет. Приложение запускается локально в браузере через Docker.
 - Это осознанная замена Tauri: требование "ничего не ставить на компьютер, только Docker" важнее desktop-shell.
+- Реализовано: `docker-compose.yml`, `frontend/` на React + Vite, `backend/` на Rust Axum, backend endpoint `/health`.
+- Проверено через Docker: `docker compose up --build -d`, frontend `http://localhost:5173`, backend `http://localhost:3000/health`.
+- Проверки: `docker compose run --rm frontend npm run build`, `docker compose run --rm frontend npm audit --audit-level=moderate`, `docker compose run --rm backend cargo test`.
 
 ---
 

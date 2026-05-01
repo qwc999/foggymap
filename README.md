@@ -23,10 +23,21 @@
 
 ## Запуск
 
-Команда запуска будет добавлена после создания Docker Compose структуры:
+Запуск всего приложения:
 
 ```powershell
 docker compose up --build
+```
+
+После запуска:
+
+- Frontend: `http://localhost:5173`
+- Backend health check: `http://localhost:3000/health`
+
+Остановка:
+
+```powershell
+docker compose down
 ```
 
 ## Работа С Задачами
