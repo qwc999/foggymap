@@ -107,7 +107,7 @@
 
 ## FOG-004 - UI-Фундамент
 
-**Status:** Todo
+**Status:** Done
 
 **Description:**
 Настроить Tailwind CSS, shadcn/ui и lucide-react. Заменить дефолтный scaffold-экран на чистую поверхность приложения, готовую для полноэкранной карты.
@@ -122,6 +122,9 @@
 
 **Notes:**
 - Полировка дизайна будет позже. Эта задача только про базовую UI-инфраструктуру.
+- Реализовано: Tailwind CSS, shadcn-style `Button`, `cn` utility, `components.json`, lucide-react icons и alias `@/`.
+- Стартовый экран заменен на полноэкранную app surface с toolbar-заготовкой поверх будущей карты.
+- Проверено: frontend typecheck/lint/format/test/build/audit через Docker; локальная страница проверена через in-app browser.
 
 ---
 
