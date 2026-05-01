@@ -82,7 +82,7 @@
 
 ## FOG-003 - Базовые Инструменты Качества
 
-**Status:** Todo
+**Status:** Done
 
 **Description:**
 Настроить форматирование, linting и тестовые команды для frontend и Rust backend так, чтобы они запускались через Docker Compose.
@@ -98,6 +98,10 @@
 
 **Notes:**
 - Конфигурация должна быть консервативной. Не тратить ранний этап на спорные style-решения.
+- Реализовано: frontend scripts `typecheck`, `lint`, `format`, `format:write`, `test`, `build`; ESLint flat config; Prettier config; минимальный Vitest smoke-test.
+- Backend image теперь устанавливает `rustfmt` и `clippy`, чтобы Rust-проверки выполнялись внутри Docker.
+- Команды проверок зафиксированы в README и запускаются через `docker compose run --rm --no-deps ...`.
+- Проверено: frontend typecheck/lint/format/test/build/audit, backend fmt/clippy/test.
 
 ---
 

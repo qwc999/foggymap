@@ -37,8 +37,8 @@ export function App() {
         <p className="eyebrow">foggy_map</p>
         <h1>Локальная карта посещенных мест</h1>
         <p className="description">
-          Docker Compose skeleton готов. Следующий шаг - подключить карту,
-          хранение и инструменты закрашивания.
+          Docker Compose skeleton готов. Следующий шаг - подключить карту, хранение и
+          инструменты закрашивания.
         </p>
         <div className="status-row">
           <span className={`status-dot status-${health}`} />

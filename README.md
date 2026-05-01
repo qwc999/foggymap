@@ -40,6 +40,22 @@ docker compose up --build
 docker compose down
 ```
 
+## Проверки
+
+Все проверки запускаются через Docker:
+
+```powershell
+docker compose run --rm --no-deps frontend npm run typecheck
+docker compose run --rm --no-deps frontend npm run lint
+docker compose run --rm --no-deps frontend npm run format
+docker compose run --rm --no-deps frontend npm run test
+docker compose run --rm --no-deps frontend npm run build
+docker compose run --rm --no-deps frontend npm audit --audit-level=moderate
+docker compose run --rm --no-deps backend cargo fmt --check
+docker compose run --rm --no-deps backend cargo clippy -- -D warnings
+docker compose run --rm --no-deps backend cargo test
+```
+
 ## Работа С Задачами
 
 Задачи ведутся в [TASKS.md](TASKS.md). Одна выполненная задача обычно соответствует одному git-коммиту. Для тестируемых задач тесты добавляются в том же коммите.
