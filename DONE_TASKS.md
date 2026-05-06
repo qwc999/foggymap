@@ -280,3 +280,32 @@ Unit-тесты на helpers сериализации состояния. Для
 - Сохранение не запускается, пока начальная загрузка app state не завершена; повторное сохранение одинакового состояния отсекается signature-сравнением.
 - Проверено: frontend typecheck/lint/format/test/build/audit через Docker.
 - Проверено в реальном compose-сервисе: frontend и backend подняты, `/api/app-state/map.view` сохраняет и возвращает center/zoom/bearing/mode через frontend proxy. После проверки состояние сброшено на default street/Moscow.
+
+---
+
+## FOG-012 - H3 Helpers На Frontend
+
+**Status:** Done
+
+**Description:**
+Добавить H3 helpers для определения ячейки под курсором, преобразования границы ячейки в GeoJSON и расчета brush radius.
+
+**Acceptance:**
+- `lat/lng` конвертируются в H3-ячейку текущего resolution.
+- H3-ячейки конвертируются в валидные GeoJSON polygons для MapLibre.
+- Радиус кисти в метрах переводится в разумный H3 disk radius.
+
+**Tests:**
+Vitest-тесты для всех чистых helper-функций.
+
+**Notes:**
+- Добавлена dependency `h3-js` во frontend через Docker.
+- Добавлен shared config `frontend/src/config/h3.ts`: `DEFAULT_H3_RESOLUTION = 11`, min/max H3 resolution и базовые brush radius constants.
+- Добавлен helper module `frontend/src/geo/h3Helpers.ts`:
+  - `lngLatToH3Cell` конвертирует `lng/lat` в H3 id;
+  - `h3CellToGeoJsonFeature` возвращает closed GeoJSON Polygon feature с координатами `[lng, lat]`;
+  - `h3CellsToGeoJsonFeatureCollection` готовит FeatureCollection для MapLibre sources;
+  - `metersToH3DiskRadius` переводит радиус кисти в метрах в H3 `gridDisk` radius через средние edge/apothem/center-spacing метрики;
+  - `getH3DiskForLngLat` возвращает набор H3-ячеек для кисти вокруг точки.
+- Helpers валидируют координаты, H3 resolution, cell id и неотрицательный радиус кисти.
+- Проверено: frontend typecheck/lint/format/test/build/audit через Docker; Vitest покрывает cell conversion, GeoJSON polygon closure, FeatureCollection, brush radius, grid disk и invalid input.

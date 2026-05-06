@@ -27,26 +27,6 @@
 - Источники карт должны быть заменяемыми. Публичные OSM tiles можно использовать на раннем этапе разработки, но архитектура не должна быть жестко привязана к ним.
 - Спутниковый режим должен быть конфигурируемым. Предпочтительные источники - бесплатные/open варианты вроде NASA GIBS, OpenAerialMap или Sentinel/Copernicus-derived слоев. Esri World Imagery можно рассматривать только как optional-слой для личного использования с attribution и зафиксированными ограничениями.
 
-## FOG-012 - H3 Helpers На Frontend
-
-**Status:** Todo
-
-**Description:**
-Добавить H3 helpers для определения ячейки под курсором, преобразования границы ячейки в GeoJSON и расчета brush radius.
-
-**Acceptance:**
-- `lat/lng` конвертируются в H3-ячейку текущего resolution.
-- H3-ячейки конвертируются в валидные GeoJSON polygons для MapLibre.
-- Радиус кисти в метрах переводится в разумный H3 disk radius.
-
-**Tests:**
-Vitest-тесты для всех чистых helper-функций.
-
-**Notes:**
-- H3 resolution хранить в одном shared config module.
-
----
-
 ## FOG-013 - Preview H3-Ячейки Под Курсором
 
 **Status:** Todo

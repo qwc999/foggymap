@@ -1,0 +1,7 @@
+export const MIN_H3_RESOLUTION = 0;
+export const MAX_H3_RESOLUTION = 15;
+export const DEFAULT_H3_RESOLUTION = 11;
+
+export const DEFAULT_BRUSH_RADIUS_METERS = 30;
+export const MIN_BRUSH_RADIUS_METERS = 1;
+export const MAX_BRUSH_RADIUS_METERS = 10_000;
