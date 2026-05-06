@@ -6,6 +6,7 @@ services:
     environment:
       APP_HOST: 0.0.0.0
       APP_PORT: "3000"
+      DATABASE_PATH: /data/foggy_map.sqlite3
       RUST_LOG: info
     ports:
       - "3000:3000"

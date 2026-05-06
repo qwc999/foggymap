@@ -173,3 +173,30 @@ Provider config tests покрывают выбранный спутниковы
 - Offline-пригодность: слой online-only; приложение не хранит базовые тайлы карты. Offline-пакеты или кеш - отдельная будущая задача.
 - Проверен OpenAerialMap как альтернативный кандидат: оставлен для будущего optional provider, потому что покрытие неравномерное и каталоговое, поэтому он слабый global default для MVP.
 - Проверено: frontend typecheck/lint/format/test/build/audit через Docker; provider tests покрывают NASA GIBS default, tile URL, attribution и ограничения.
+
+---
+
+## FOG-008 - SQLite Schema И Миграции
+
+**Status:** Done
+
+**Description:**
+Создать backend-инициализацию базы и миграции для app state, painted H3 cells и home location.
+
+**Acceptance:**
+- SQLite-база создается в Docker volume приложения.
+- Миграции идемпотентны.
+- Есть таблицы `app_state`, `painted_cells`, `home_location`.
+- WAL mode включен, если он совместим с выбранным Docker/SQLite setup.
+
+**Tests:**
+Rust-тесты прогоняют миграции на in-memory или временной SQLite-базе.
+
+**Notes:**
+- Добавлен backend-модуль `db`, который открывает SQLite-файл из `DATABASE_PATH`, по умолчанию `/data/foggy_map.sqlite3`.
+- `docker-compose.yml` передает `DATABASE_PATH: /data/foggy_map.sqlite3`; каталог `/data` остается Docker volume `app_data`.
+- Добавлена таблица `schema_migrations`; первая миграция создает `app_state`, `painted_cells`, `home_location` и индекс `idx_painted_cells_centroid`.
+- `painted_cells` хранит `h3_id`, `resolution`, `centroid_lng`, `centroid_lat` и `painted_at`; добавлены базовые CHECK constraints для координат и H3 resolution.
+- При старте backend включает `foreign_keys`, `journal_mode = WAL` и `synchronous = NORMAL`, затем применяет миграции.
+- Проверено: `docker compose run --rm --no-deps backend cargo fmt --check`, `cargo test`, `cargo clippy --all-targets -- -D warnings`.
+- Проверено в реальном compose-сервисе: backend отвечает на `/health`, файл `/data/foggy_map.sqlite3` создается в Docker volume.

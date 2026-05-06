@@ -27,27 +27,6 @@
 - Источники карт должны быть заменяемыми. Публичные OSM tiles можно использовать на раннем этапе разработки, но архитектура не должна быть жестко привязана к ним.
 - Спутниковый режим должен быть конфигурируемым. Предпочтительные источники - бесплатные/open варианты вроде NASA GIBS, OpenAerialMap или Sentinel/Copernicus-derived слоев. Esri World Imagery можно рассматривать только как optional-слой для личного использования с attribution и зафиксированными ограничениями.
 
-## FOG-008 - SQLite Schema И Миграции
-
-**Status:** Todo
-
-**Description:**
-Создать backend-инициализацию базы и миграции для app state, painted H3 cells и home location.
-
-**Acceptance:**
-- SQLite-база создается в Docker volume приложения.
-- Миграции идемпотентны.
-- Есть таблицы `app_state`, `painted_cells`, `home_location`.
-- WAL mode включен, если он совместим с выбранным Docker/SQLite setup.
-
-**Tests:**
-Rust-тесты прогоняют миграции на in-memory или временной SQLite-базе.
-
-**Notes:**
-- `painted_cells` должна хранить H3 id, resolution, centroid longitude, centroid latitude и timestamp.
-
----
-
 ## FOG-009 - API Состояния Приложения
 
 **Status:** Todo
