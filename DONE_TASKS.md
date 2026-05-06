@@ -226,3 +226,31 @@ Rust-тесты покрывают insert, update, load и missing-key пове�
 - Добавлен typed frontend client `loadAppState<T>()` / `saveAppState<T>()` в `frontend/src/api/appState.ts`.
 - Проверено: backend `cargo fmt --check`, `cargo test`, `cargo clippy --all-targets -- -D warnings`; frontend typecheck/lint/format/test/build/audit.
 - Проверено в реальном compose-сервисе: missing-key load, save, load, update и invalid-key error.
+
+---
+
+## FOG-010 - API Painted Cells
+
+**Status:** Done
+
+**Description:**
+Экспортировать HTTP API для закрашивания ячеек, стирания ячеек и загрузки закрашенных ячеек внутри текущего viewport.
+
+**Acceptance:**
+- `paint_cells` вставляет batches одной транзакцией.
+- `erase_cells` удаляет batches одной транзакцией.
+- `get_cells_in_bbox` возвращает только ячейки, чей сохраненный centroid попадает в bounds.
+- Повторное закрашивание той же ячейки идемпотентно.
+
+**Tests:**
+Rust-тесты покрывают batch insert, duplicate insert, erase, bbox query и примерный batch на 10k ячеек.
+
+**Notes:**
+- Добавлен backend API: `POST /painted-cells/paint`, `POST /painted-cells/erase`, `GET /painted-cells?west=...&south=...&east=...&north=...`.
+- Payload paint: `{ "cells": [{ "h3_id": "...", "resolution": 11, "centroid_lng": 37.61, "centroid_lat": 55.75 }] }`.
+- Payload erase: `{ "cells": [{ "h3_id": "...", "resolution": 11 }] }`.
+- Batch paint и erase выполняются через SQLite transaction; paint использует `ON CONFLICT(h3_id, resolution) DO NOTHING`, поэтому повторная покраска ячейки не создает дубликат и не меняет состояние.
+- Bbox-запрос фильтрует только по сохраненному centroid и поддерживает bounds через antimeridian (`west > east`).
+- Добавлена валидация batch size до 10k, координат, H3 resolution и пустых/слишком длинных `h3_id`; некорректный input возвращает JSON error с `400`.
+- Проверено: `docker compose run --rm --no-deps backend cargo fmt --check`, `cargo test`, `cargo clippy --all-targets -- -D warnings`.
+- Проверено в реальном compose-сервисе: paint, duplicate paint, bbox query, erase, empty bbox after erase и invalid bbox error.

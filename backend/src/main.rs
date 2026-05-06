@@ -1,10 +1,10 @@
 use std::{env, error::Error, path::PathBuf, sync::Arc};
 
 use axum::{
-    extract::{rejection::JsonRejection, Path, State},
+    extract::{rejection::JsonRejection, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use rusqlite::Connection;
@@ -13,6 +13,9 @@ use serde_json::Value;
 use tower_http::cors::{Any, CorsLayer};
 
 mod db;
+
+const MAX_PAINTED_CELLS_BATCH_LEN: usize = 10_000;
+const MAX_H3_ID_LEN: usize = 32;
 
 #[derive(Clone)]
 struct ApiState {
@@ -42,9 +45,40 @@ struct ErrorResponse {
     message: String,
 }
 
+#[derive(Deserialize)]
+struct PaintCellsRequest {
+    cells: Vec<db::PaintCellInput>,
+}
+
+#[derive(Deserialize)]
+struct EraseCellsRequest {
+    cells: Vec<db::CellRef>,
+}
+
+#[derive(Deserialize)]
+struct PaintedCellsQuery {
+    west: f64,
+    south: f64,
+    east: f64,
+    north: f64,
+}
+
+#[derive(Serialize)]
+struct PaintedCellsResponse {
+    cells: Vec<db::PaintedCell>,
+}
+
+#[derive(Serialize)]
+struct BatchMutationResponse {
+    requested: usize,
+    changed: usize,
+}
+
 enum ApiError {
     InvalidAppStateKey(db::AppStateKeyError),
     InvalidJson(JsonRejection),
+    InvalidPaintedCellsInput(String),
+    InvalidBbox(String),
     Storage(db::StorageError),
     CorruptAppState {
         key: String,
@@ -101,6 +135,51 @@ async fn save_app_state(
     ))
 }
 
+async fn paint_cells(
+    State(state): State<ApiState>,
+    payload: Result<Json<PaintCellsRequest>, JsonRejection>,
+) -> Result<Json<BatchMutationResponse>, ApiError> {
+    let Json(payload) = payload.map_err(ApiError::InvalidJson)?;
+
+    validate_paint_cells_request(&payload.cells)?;
+
+    let mut connection = open_initialized_connection(&state)?;
+    let changed = db::paint_cells(&mut connection, &payload.cells).map_err(to_storage_error)?;
+
+    Ok(Json(BatchMutationResponse {
+        requested: payload.cells.len(),
+        changed,
+    }))
+}
+
+async fn erase_cells(
+    State(state): State<ApiState>,
+    payload: Result<Json<EraseCellsRequest>, JsonRejection>,
+) -> Result<Json<BatchMutationResponse>, ApiError> {
+    let Json(payload) = payload.map_err(ApiError::InvalidJson)?;
+
+    validate_cell_refs_request(&payload.cells)?;
+
+    let mut connection = open_initialized_connection(&state)?;
+    let changed = db::erase_cells(&mut connection, &payload.cells).map_err(to_storage_error)?;
+
+    Ok(Json(BatchMutationResponse {
+        requested: payload.cells.len(),
+        changed,
+    }))
+}
+
+async fn get_painted_cells_in_bbox(
+    State(state): State<ApiState>,
+    Query(query): Query<PaintedCellsQuery>,
+) -> Result<Json<PaintedCellsResponse>, ApiError> {
+    let bbox = validate_bbox(query)?;
+    let connection = open_initialized_connection(&state)?;
+    let cells = db::get_cells_in_bbox(&connection, bbox).map_err(to_storage_error)?;
+
+    Ok(Json(PaintedCellsResponse { cells }))
+}
+
 fn open_initialized_connection(state: &ApiState) -> Result<Connection, ApiError> {
     let connection = db::open_database(state.database_path.as_ref()).map_err(ApiError::Storage)?;
     db::initialize_connection(&connection).map_err(to_storage_error)?;
@@ -112,6 +191,122 @@ fn to_storage_error(error: rusqlite::Error) -> ApiError {
     ApiError::Storage(error.into())
 }
 
+fn validate_paint_cells_request(cells: &[db::PaintCellInput]) -> Result<(), ApiError> {
+    validate_batch_len(cells.len())?;
+
+    for cell in cells {
+        validate_cell_identity(&cell.h3_id, cell.resolution)?;
+        validate_longitude(cell.centroid_lng, "centroid_lng")?;
+        validate_latitude(cell.centroid_lat, "centroid_lat")?;
+    }
+
+    Ok(())
+}
+
+fn validate_cell_refs_request(cells: &[db::CellRef]) -> Result<(), ApiError> {
+    validate_batch_len(cells.len())?;
+
+    for cell in cells {
+        validate_cell_identity(&cell.h3_id, cell.resolution)?;
+    }
+
+    Ok(())
+}
+
+fn validate_batch_len(len: usize) -> Result<(), ApiError> {
+    if len > MAX_PAINTED_CELLS_BATCH_LEN {
+        return Err(ApiError::InvalidPaintedCellsInput(format!(
+            "painted cells batch must contain at most {MAX_PAINTED_CELLS_BATCH_LEN} cells"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_cell_identity(h3_id: &str, resolution: i64) -> Result<(), ApiError> {
+    if h3_id.is_empty() {
+        return Err(ApiError::InvalidPaintedCellsInput(
+            "h3_id must not be empty".to_string(),
+        ));
+    }
+
+    if h3_id.len() > MAX_H3_ID_LEN {
+        return Err(ApiError::InvalidPaintedCellsInput(format!(
+            "h3_id must be at most {MAX_H3_ID_LEN} characters"
+        )));
+    }
+
+    if !(db::MIN_H3_RESOLUTION..=db::MAX_H3_RESOLUTION).contains(&resolution) {
+        return Err(ApiError::InvalidPaintedCellsInput(format!(
+            "resolution must be between {} and {}",
+            db::MIN_H3_RESOLUTION,
+            db::MAX_H3_RESOLUTION
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_bbox(query: PaintedCellsQuery) -> Result<db::Bbox, ApiError> {
+    validate_bbox_longitude(query.west, "west")?;
+    validate_bbox_longitude(query.east, "east")?;
+    validate_bbox_latitude(query.south, "south")?;
+    validate_bbox_latitude(query.north, "north")?;
+
+    if query.south > query.north {
+        return Err(ApiError::InvalidBbox(
+            "south must be less than or equal to north".to_string(),
+        ));
+    }
+
+    Ok(db::Bbox {
+        west: query.west,
+        south: query.south,
+        east: query.east,
+        north: query.north,
+    })
+}
+
+fn validate_longitude(value: f64, field_name: &'static str) -> Result<(), ApiError> {
+    if !value.is_finite() || !(-180.0..=180.0).contains(&value) {
+        return Err(ApiError::InvalidPaintedCellsInput(format!(
+            "{field_name} must be a finite longitude between -180 and 180"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_latitude(value: f64, field_name: &'static str) -> Result<(), ApiError> {
+    if !value.is_finite() || !(-90.0..=90.0).contains(&value) {
+        return Err(ApiError::InvalidPaintedCellsInput(format!(
+            "{field_name} must be a finite latitude between -90 and 90"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_bbox_longitude(value: f64, field_name: &'static str) -> Result<(), ApiError> {
+    if !value.is_finite() || !(-180.0..=180.0).contains(&value) {
+        return Err(ApiError::InvalidBbox(format!(
+            "{field_name} must be a finite longitude between -180 and 180"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_bbox_latitude(value: f64, field_name: &'static str) -> Result<(), ApiError> {
+    if !value.is_finite() || !(-90.0..=90.0).contains(&value) {
+        return Err(ApiError::InvalidBbox(format!(
+            "{field_name} must be a finite latitude between -90 and 90"
+        )));
+    }
+
+    Ok(())
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, error, message) = match self {
@@ -121,6 +316,12 @@ impl IntoResponse for ApiError {
                 error.to_string(),
             ),
             Self::InvalidJson(error) => (error.status(), "invalid_json", error.body_text()),
+            Self::InvalidPaintedCellsInput(message) => (
+                StatusCode::BAD_REQUEST,
+                "invalid_painted_cells_input",
+                message,
+            ),
+            Self::InvalidBbox(message) => (StatusCode::BAD_REQUEST, "invalid_bbox", message),
             Self::Storage(error) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "storage_error",
@@ -158,6 +359,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/app-state/{key}", get(load_app_state).put(save_app_state))
+        .route("/painted-cells", get(get_painted_cells_in_bbox))
+        .route("/painted-cells/paint", post(paint_cells))
+        .route("/painted-cells/erase", post(erase_cells))
         .with_state(state)
         .layer(cors);
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
