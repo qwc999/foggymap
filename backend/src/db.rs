@@ -5,9 +5,10 @@ use std::{
     path::Path,
 };
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 pub const DEFAULT_DATABASE_PATH: &str = "/data/foggy_map.sqlite3";
+const MAX_APP_STATE_KEY_LEN: usize = 64;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_state (
@@ -47,6 +48,31 @@ const MIGRATIONS: &[Migration] = &[Migration {
 pub enum StorageError {
     Io(std::io::Error),
     Sqlite(rusqlite::Error),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AppStateKeyError {
+    Empty,
+    TooLong { max_len: usize },
+    InvalidCharacter { character: char },
+}
+
+impl Display for AppStateKeyError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => write!(formatter, "app state key must not be empty"),
+            Self::TooLong { max_len } => {
+                write!(
+                    formatter,
+                    "app state key must be at most {max_len} characters"
+                )
+            }
+            Self::InvalidCharacter { character } => write!(
+                formatter,
+                "app state key contains unsupported character '{character}'"
+            ),
+        }
+    }
 }
 
 impl Display for StorageError {
@@ -165,6 +191,58 @@ fn apply_migration(connection: &Connection, migration: &Migration) -> rusqlite::
     Ok(())
 }
 
+pub fn validate_app_state_key(key: &str) -> Result<(), AppStateKeyError> {
+    if key.is_empty() {
+        return Err(AppStateKeyError::Empty);
+    }
+
+    if key.len() > MAX_APP_STATE_KEY_LEN {
+        return Err(AppStateKeyError::TooLong {
+            max_len: MAX_APP_STATE_KEY_LEN,
+        });
+    }
+
+    if let Some(character) = key.chars().find(|character| {
+        !character.is_ascii_alphanumeric() && !matches!(character, '_' | '-' | '.')
+    }) {
+        return Err(AppStateKeyError::InvalidCharacter { character });
+    }
+
+    Ok(())
+}
+
+pub fn load_app_state_value(
+    connection: &Connection,
+    key: &str,
+) -> rusqlite::Result<Option<String>> {
+    connection
+        .query_row(
+            "SELECT value_json FROM app_state WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )
+        .optional()
+}
+
+pub fn save_app_state_value(
+    connection: &Connection,
+    key: &str,
+    value_json: &str,
+) -> rusqlite::Result<()> {
+    connection.execute(
+        r#"
+        INSERT INTO app_state (key, value_json)
+        VALUES (?1, ?2)
+        ON CONFLICT(key) DO UPDATE SET
+            value_json = excluded.value_json,
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        "#,
+        params![key, value_json],
+    )?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -175,7 +253,10 @@ mod tests {
 
     use rusqlite::{params, Connection};
 
-    use super::{initialize_connection, initialize_database};
+    use super::{
+        initialize_connection, initialize_database, load_app_state_value, save_app_state_value,
+        validate_app_state_key, AppStateKeyError,
+    };
 
     #[test]
     fn migrations_create_expected_tables() {
@@ -276,6 +357,75 @@ mod tests {
         fs::remove_file(&path).expect("remove temp database");
 
         assert_eq!(journal_mode, "wal");
+    }
+
+    #[test]
+    fn app_state_load_returns_none_when_key_is_missing() {
+        let connection = Connection::open_in_memory().expect("open in-memory sqlite");
+
+        initialize_connection(&connection).expect("run migrations");
+        let value =
+            load_app_state_value(&connection, "map.viewport").expect("load missing app state");
+
+        assert_eq!(value, None);
+    }
+
+    #[test]
+    fn app_state_save_inserts_and_loads_value() {
+        let connection = Connection::open_in_memory().expect("open in-memory sqlite");
+
+        initialize_connection(&connection).expect("run migrations");
+        save_app_state_value(
+            &connection,
+            "map.viewport",
+            r#"{"center":[37.6173,55.7558],"zoom":11}"#,
+        )
+        .expect("save app state");
+
+        let value = load_app_state_value(&connection, "map.viewport")
+            .expect("load saved app state")
+            .expect("app state value exists");
+
+        assert_eq!(value, r#"{"center":[37.6173,55.7558],"zoom":11}"#);
+    }
+
+    #[test]
+    fn app_state_save_updates_existing_value() {
+        let connection = Connection::open_in_memory().expect("open in-memory sqlite");
+
+        initialize_connection(&connection).expect("run migrations");
+        save_app_state_value(&connection, "map.zoom", "11").expect("save first value");
+        save_app_state_value(&connection, "map.zoom", "12").expect("save second value");
+
+        let value = load_app_state_value(&connection, "map.zoom")
+            .expect("load updated app state")
+            .expect("app state value exists");
+        let row_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM app_state", [], |row| row.get(0))
+            .expect("count app state rows");
+
+        assert_eq!(value, "12");
+        assert_eq!(row_count, 1);
+    }
+
+    #[test]
+    fn app_state_key_validation_accepts_stable_client_keys() {
+        for key in ["map.viewport", "map-mode", "brush_size", "homeLocation1"] {
+            validate_app_state_key(key).expect("valid app state key");
+        }
+    }
+
+    #[test]
+    fn app_state_key_validation_rejects_unsupported_keys() {
+        assert_eq!(validate_app_state_key(""), Err(AppStateKeyError::Empty));
+        assert!(matches!(
+            validate_app_state_key("map viewport"),
+            Err(AppStateKeyError::InvalidCharacter { character: ' ' })
+        ));
+        assert!(matches!(
+            validate_app_state_key(&"a".repeat(65)),
+            Err(AppStateKeyError::TooLong { max_len: 64 })
+        ));
     }
 
     fn temp_database_path() -> PathBuf {

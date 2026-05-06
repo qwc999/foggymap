@@ -200,3 +200,29 @@ Rust-тесты прогоняют миграции на in-memory или вре
 - При старте backend включает `foreign_keys`, `journal_mode = WAL` и `synchronous = NORMAL`, затем применяет миграции.
 - Проверено: `docker compose run --rm --no-deps backend cargo fmt --check`, `cargo test`, `cargo clippy --all-targets -- -D warnings`.
 - Проверено в реальном compose-сервисе: backend отвечает на `/health`, файл `/data/foggy_map.sqlite3` создается в Docker volume.
+
+---
+
+## FOG-009 - API Состояния Приложения
+
+**Status:** Done
+
+**Description:**
+Экспортировать HTTP API для сохранения и загрузки JSON-encoded app state значений по ключу.
+
+**Acceptance:**
+- Frontend может сохранять и загружать типизированное состояние через небольшой API client.
+- Отсутствующий ключ возвращает `null`/`None` без ошибки.
+- Некорректный input обрабатывается предсказуемо.
+
+**Tests:**
+Rust-тесты покрывают insert, update, load и missing-key поведение.
+
+**Notes:**
+- Добавлен backend API: `GET /app-state/{key}` и `PUT /app-state/{key}`. Через frontend dev proxy он доступен как `/api/app-state/{key}`.
+- `GET` возвращает `{ "key": "...", "value": null }` для отсутствующего ключа без ошибки.
+- `PUT` принимает payload `{ "value": <json> }`, сохраняет JSON в `app_state.value_json` и обновляет существующий ключ через SQLite upsert.
+- Ключи app state валидируются: допустимы ASCII letters/digits, `_`, `-`, `.`, максимум 64 символа; ошибки возвращаются JSON-ответом с `400`.
+- Добавлен typed frontend client `loadAppState<T>()` / `saveAppState<T>()` в `frontend/src/api/appState.ts`.
+- Проверено: backend `cargo fmt --check`, `cargo test`, `cargo clippy --all-targets -- -D warnings`; frontend typecheck/lint/format/test/build/audit.
+- Проверено в реальном compose-сервисе: missing-key load, save, load, update и invalid-key error.
