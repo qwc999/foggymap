@@ -254,3 +254,29 @@ Rust-тесты покрывают batch insert, duplicate insert, erase, bbox q
 - Добавлена валидация batch size до 10k, координат, H3 resolution и пустых/слишком длинных `h3_id`; некорректный input возвращает JSON error с `400`.
 - Проверено: `docker compose run --rm --no-deps backend cargo fmt --check`, `cargo test`, `cargo clippy --all-targets -- -D warnings`.
 - Проверено в реальном compose-сервисе: paint, duplicate paint, bbox query, erase, empty bbox after erase и invalid bbox error.
+
+---
+
+## FOG-011 - Сохранение Положения Карты
+
+**Status:** Done
+
+**Description:**
+Сохранять и восстанавливать центр карты, zoom, bearing если будет использоваться, и текущий режим карты.
+
+**Acceptance:**
+- После закрытия и повторного открытия приложения восстанавливается последняя позиция карты.
+- Переключение обычная карта/спутник сохраняется.
+- Сохранение движения карты debounced и не пишет в БД на каждый animation frame.
+
+**Tests:**
+Unit-тесты на helpers сериализации состояния. Для restart behavior - ручная проверка.
+
+**Notes:**
+- Добавлен frontend state module `frontend/src/state/mapViewState.ts`: default state, storage key `map.view`, нормализация JSON из API, сериализация и stable signature для дедупликации save.
+- `App` загружает `map.view` через FOG-009 API, передает состояние в `MapView` и сохраняет изменения через debounced `saveAppState`.
+- `MapView` теперь принимает controlled `viewState`, стартует с сохраненными center/zoom/bearing/mode, отправляет изменения после `moveend` и меняет raster style при переключении street/satellite без remount.
+- Toolbar получил рабочие кнопки `Map` и `Satellite`; `Brush` оставлен disabled до задач рисования.
+- Сохранение не запускается, пока начальная загрузка app state не завершена; повторное сохранение одинакового состояния отсекается signature-сравнением.
+- Проверено: frontend typecheck/lint/format/test/build/audit через Docker.
+- Проверено в реальном compose-сервисе: frontend и backend подняты, `/api/app-state/map.view` сохраняет и возвращает center/zoom/bearing/mode через frontend proxy. После проверки состояние сброшено на default street/Moscow.
