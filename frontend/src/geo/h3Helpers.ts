@@ -1,6 +1,7 @@
 import {
   UNITS,
   cellToBoundary,
+  cellToLatLng,
   getHexagonEdgeLengthAvg,
   getResolution,
   gridDisk,
@@ -72,6 +73,14 @@ export function h3CellToGeoJsonFeature(h3Id: string): H3CellFeature {
       coordinates: [closeLinearRing(boundary)],
     },
   };
+}
+
+export function h3CellToLngLat(h3Id: string): LngLat {
+  assertValidH3Cell(h3Id);
+
+  const [lat, lng] = cellToLatLng(h3Id);
+
+  return { lng, lat };
 }
 
 export function h3CellsToGeoJsonFeatureCollection(

@@ -333,3 +333,31 @@ Vitest-тесты для всех чистых helper-функций.
 - Source/layers preview восстанавливаются после `load`/`styledata`, поэтому overlay продолжает работать после смены base style и не зависит от успешной загрузки raster tiles.
 - Проверено через Docker: frontend typecheck, lint, format check, Vitest, build и npm audit.
 - Проверено визуально в headless Chrome на локальном `http://localhost:5173`: при наведении на карту появился прозрачный H3-полигон; runtime exceptions не было. После проверки `map.view` сброшен на default street/Moscow/zoom 11.
+
+---
+
+## FOG-014 - Рисование Кистью
+
+**Status:** Done
+
+**Description:**
+Добавить paint mode: drag по карте закрашивает H3-ячейки под радиусом кисти, рисует их прозрачным overlay и сохраняет в SQLite.
+
+**Acceptance:**
+- Drag оставляет видимый след посещенной территории.
+- Закрашенные ячейки остаются после restart.
+- Записи в БД батчатся, а не отправляются на каждое mouse event.
+- Карта остается usable во время рисования.
+
+**Tests:**
+Unit-тесты на brush/H3 helper logic. Rust persistence уже покрыта в FOG-010.
+
+**Notes:**
+- Brush button в toolbar теперь включает paint mode; текущий MVP-радиус кисти использует `DEFAULT_BRUSH_RADIUS_METERS = 30`.
+- `MapView` рисует отдельный прозрачный blue overlay для painted H3 cells и сохраняет preview-ячейку поверх него.
+- Во время drag новые H3-ячейки добавляются в overlay сразу, а в SQLite отправляются batched после завершения stroke через `POST /painted-cells/paint`.
+- Добавлен frontend client `frontend/src/api/paintedCells.ts` для bbox load и paint batch save.
+- Добавлены чистые helpers `frontend/src/paint/brush.ts`: дедупликация новых H3 ids, подготовка backend payload с centroid и chunking до 10k cells.
+- Для restart behavior добавлена базовая загрузка painted cells из текущего viewport bbox; полноценная debounce/prune/max-limit логика остается в FOG-015.
+- Проверено через Docker: frontend typecheck, lint, format check, Vitest, build и npm audit.
+- E2E-проверка в локальном compose: headless Chrome включил brush, протянул stroke по карте, backend получил 12 новых H3 cells, эти cells остались после `docker compose restart backend`; runtime exceptions не было. Проверочные cells затем удалены через erase API, `map.view` восстановлен к прежнему значению.

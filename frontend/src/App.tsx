@@ -2,10 +2,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Brush, MapPinned, Satellite } from "lucide-react";
 
 import { loadAppState, saveAppState, type JsonValue } from "@/api/appState";
+import {
+  loadPaintedCellsInBbox,
+  paintCells,
+  type PaintedCellsBbox,
+} from "@/api/paintedCells";
 import { MapView } from "@/components/map/MapView";
 import { Button } from "@/components/ui/button";
+import { DEFAULT_BRUSH_RADIUS_METERS } from "@/config/h3";
 import type { MapMode } from "@/config/mapProviders";
 import { cn } from "@/lib/utils";
+import { chunkPaintCellInputs, createPaintCellInputs } from "@/paint/brush";
 import {
   areMapViewStatesEqual,
   DEFAULT_MAP_VIEW_STATE,
@@ -18,6 +25,7 @@ import {
 
 type HealthState = "loading" | "ok" | "error";
 type MapPersistenceState = "loading" | "saved" | "saving" | "error";
+type PaintPersistenceState = "idle" | "loading" | "saved" | "saving" | "error";
 
 export function App() {
   const [health, setHealth] = useState<HealthState>("loading");
@@ -25,8 +33,18 @@ export function App() {
     useState<MapViewState>(DEFAULT_MAP_VIEW_STATE);
   const [mapPersistenceState, setMapPersistenceState] =
     useState<MapPersistenceState>("loading");
+  const [paintModeEnabled, setPaintModeEnabled] = useState(false);
+  const [paintedH3Ids, setPaintedH3Ids] = useState<string[]>([]);
+  const [paintedCellsViewportBbox, setPaintedCellsViewportBbox] =
+    useState<PaintedCellsBbox | null>(null);
+  const [paintPersistenceState, setPaintPersistenceState] =
+    useState<PaintPersistenceState>("idle");
   const lastPersistedMapStateSignatureRef = useRef<string | null>(null);
   const saveSequenceRef = useRef(0);
+  const paintedH3IdSetRef = useRef<Set<string>>(new Set());
+  const pendingPaintH3IdsRef = useRef<Set<string>>(new Set());
+  const isSavingPaintCellsRef = useRef(false);
+  const viewportLoadSequenceRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -124,6 +142,100 @@ export function App() {
     };
   }, [mapPersistenceState, mapViewState]);
 
+  const addPaintedH3Ids = useCallback((h3Ids: readonly string[]) => {
+    const nextH3Ids: string[] = [];
+
+    for (const h3Id of h3Ids) {
+      if (paintedH3IdSetRef.current.has(h3Id)) {
+        continue;
+      }
+
+      paintedH3IdSetRef.current.add(h3Id);
+      nextH3Ids.push(h3Id);
+    }
+
+    if (nextH3Ids.length > 0) {
+      setPaintedH3Ids([...paintedH3IdSetRef.current]);
+    }
+
+    return nextH3Ids;
+  }, []);
+
+  const flushPendingPaintCells = useCallback(() => {
+    if (isSavingPaintCellsRef.current || pendingPaintH3IdsRef.current.size === 0) {
+      return;
+    }
+
+    const h3Ids = [...pendingPaintH3IdsRef.current];
+    pendingPaintH3IdsRef.current.clear();
+    isSavingPaintCellsRef.current = true;
+    setPaintPersistenceState("saving");
+
+    void (async () => {
+      let shouldFlushAgain = false;
+
+      try {
+        const cells = createPaintCellInputs(h3Ids);
+
+        for (const batch of chunkPaintCellInputs(cells)) {
+          await paintCells(batch);
+        }
+
+        shouldFlushAgain = pendingPaintH3IdsRef.current.size > 0;
+        setPaintPersistenceState("saved");
+      } catch {
+        for (const h3Id of h3Ids) {
+          pendingPaintH3IdsRef.current.add(h3Id);
+        }
+
+        setPaintPersistenceState("error");
+      } finally {
+        isSavingPaintCellsRef.current = false;
+
+        if (shouldFlushAgain) {
+          flushPendingPaintCells();
+        }
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!paintedCellsViewportBbox) {
+      return;
+    }
+
+    const loadSequence = viewportLoadSequenceRef.current + 1;
+    viewportLoadSequenceRef.current = loadSequence;
+    setPaintPersistenceState((currentState) =>
+      currentState === "saving" ? currentState : "loading",
+    );
+
+    const timeoutId = window.setTimeout(() => {
+      loadPaintedCellsInBbox(paintedCellsViewportBbox)
+        .then((cells) => {
+          if (viewportLoadSequenceRef.current !== loadSequence) {
+            return;
+          }
+
+          addPaintedH3Ids(cells.map((cell) => cell.h3_id));
+          setPaintPersistenceState((currentState) =>
+            currentState === "saving" ? currentState : "saved",
+          );
+        })
+        .catch(() => {
+          if (viewportLoadSequenceRef.current !== loadSequence) {
+            return;
+          }
+
+          setPaintPersistenceState("error");
+        });
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [addPaintedH3Ids, paintedCellsViewportBbox]);
+
   const handleMapViewStateChange = useCallback((nextMapViewState: MapViewState) => {
     setMapViewState((currentMapViewState) =>
       areMapViewStatesEqual(currentMapViewState, nextMapViewState)
@@ -140,12 +252,37 @@ export function App() {
     );
   }, []);
 
+  const handlePaintedCellsViewportChange = useCallback((bbox: PaintedCellsBbox) => {
+    setPaintedCellsViewportBbox((currentBbox) =>
+      currentBbox && getBboxSignature(currentBbox) === getBboxSignature(bbox)
+        ? currentBbox
+        : bbox,
+    );
+  }, []);
+
+  const handlePaintCells = useCallback(
+    (h3Ids: string[]) => {
+      const newH3Ids = addPaintedH3Ids(h3Ids);
+
+      for (const h3Id of newH3Ids) {
+        pendingPaintH3IdsRef.current.add(h3Id);
+      }
+    },
+    [addPaintedH3Ids],
+  );
+
   return (
     <main className="relative h-screen w-screen overflow-hidden bg-background text-foreground">
       <MapView
         className="absolute inset-0"
         viewState={mapViewState}
+        paintModeEnabled={paintModeEnabled}
+        brushRadiusMeters={DEFAULT_BRUSH_RADIUS_METERS}
+        paintedH3Ids={paintedH3Ids}
         onViewStateChange={handleMapViewStateChange}
+        onViewportBoundsChange={handlePaintedCellsViewportChange}
+        onPaintCells={handlePaintCells}
+        onPaintStrokeEnd={flushPendingPaintCells}
       />
 
       <div className="absolute left-4 top-4 z-10 flex items-center gap-2 rounded-lg border border-border bg-background/72 p-2 shadow-2xl backdrop-blur">
@@ -167,7 +304,17 @@ export function App() {
           <Satellite className="h-4 w-4" />
           Satellite
         </Button>
-        <Button variant="secondary" size="icon" aria-label="Brush" disabled>
+        <Button
+          variant={paintModeEnabled ? "default" : "secondary"}
+          size="icon"
+          aria-label="Brush"
+          aria-pressed={paintModeEnabled}
+          title={`Brush: ${DEFAULT_BRUSH_RADIUS_METERS}m`}
+          data-testid="paint-mode"
+          onClick={() => {
+            setPaintModeEnabled((currentValue) => !currentValue);
+          }}
+        >
           <Brush className="h-4 w-4" />
         </Button>
       </div>
@@ -199,7 +346,24 @@ export function App() {
                 ? "saved"
                 : "error"}
         </span>
+        <span className="text-slate-500">/</span>
+        <span>
+          Paint:{" "}
+          {paintPersistenceState === "idle"
+            ? "ready"
+            : paintPersistenceState === "loading"
+              ? "loading"
+              : paintPersistenceState === "saving"
+                ? "saving"
+                : paintPersistenceState === "saved"
+                  ? "saved"
+                  : "error"}
+        </span>
       </div>
     </main>
   );
+}
+
+function getBboxSignature({ west, south, east, north }: PaintedCellsBbox): string {
+  return [west, south, east, north].map((value) => value.toFixed(6)).join(":");
 }

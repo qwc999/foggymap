@@ -6,6 +6,7 @@ import {
   getH3DiskForLngLat,
   getH3ResolutionMetrics,
   h3CellToGeoJsonFeature,
+  h3CellToLngLat,
   h3CellsToGeoJsonFeatureCollection,
   lngLatToH3Cell,
   metersToH3DiskRadius,
@@ -59,6 +60,14 @@ describe("H3 helpers", () => {
     expect(
       featureCollection.features.map((feature) => feature.properties.h3Id),
     ).toContain(origin);
+  });
+
+  it("returns a valid H3 cell centroid as lng/lat", () => {
+    const h3Id = lngLatToH3Cell(MOSCOW_CENTER);
+    const centroid = h3CellToLngLat(h3Id);
+
+    expect(centroid.lng).toBeCloseTo(MOSCOW_CENTER.lng, 3);
+    expect(centroid.lat).toBeCloseTo(MOSCOW_CENTER.lat, 3);
   });
 
   it("translates a meter brush radius to a reasonable H3 grid disk radius", () => {
