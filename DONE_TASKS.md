@@ -309,3 +309,27 @@ Vitest-тесты для всех чистых helper-функций.
   - `getH3DiskForLngLat` возвращает набор H3-ячеек для кисти вокруг точки.
 - Helpers валидируют координаты, H3 resolution, cell id и неотрицательный радиус кисти.
 - Проверено: frontend typecheck/lint/format/test/build/audit через Docker; Vitest покрывает cell conversion, GeoJSON polygon closure, FeatureCollection, brush radius, grid disk и invalid input.
+
+---
+
+## FOG-013 - Preview H3-Ячейки Под Курсором
+
+**Status:** Done
+
+**Description:**
+При движении курсора по карте показывать H3-ячейку под курсором как прозрачный highlighted polygon.
+
+**Acceptance:**
+- Подсвеченная ячейка плавно следует за курсором.
+- Preview скрывается, когда курсор уходит с карты.
+- Preview не ломает обычное взаимодействие с картой.
+
+**Tests:**
+Достаточно ручной визуальной проверки.
+
+**Notes:**
+- Реализован preview overlay в `MapView`: курсор конвертируется в H3 `res 11`, ячейка преобразуется в GeoJSON Polygon через helpers из FOG-012 и рисуется прозрачным cyan fill + outline поверх карты.
+- Preview обновляется на `mousemove`, очищается при уходе курсора с canvas и не меняет обычные pan/zoom interactions.
+- Source/layers preview восстанавливаются после `load`/`styledata`, поэтому overlay продолжает работать после смены base style и не зависит от успешной загрузки raster tiles.
+- Проверено через Docker: frontend typecheck, lint, format check, Vitest, build и npm audit.
+- Проверено визуально в headless Chrome на локальном `http://localhost:5173`: при наведении на карту появился прозрачный H3-полигон; runtime exceptions не было. После проверки `map.view` сброшен на default street/Moscow/zoom 11.
