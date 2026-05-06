@@ -148,3 +148,28 @@ Unit-тесты на выбор provider и fallback-поведение.
 - Реализовано: `MapView` на MapLibre GL JS, raster style из provider config, OSM development provider, attribution и navigation controls.
 - Проверено: frontend typecheck/lint/format/test/build/audit через Docker; browser DOM содержит MapLibre canvas и attribution; browser console без warning/error.
 - Vite build предупреждает о крупном chunk из-за MapLibre. Это ожидаемо для карты и не блокирует MVP; code splitting можно сделать позже, если понадобится.
+
+---
+
+## FOG-007 - Выбор Спутникового Провайдера Для MVP
+
+**Status:** Done
+
+**Description:**
+Проверить кандидатов бесплатных satellite/imagery слоев и выбрать поведение для MVP.
+
+**Acceptance:**
+- Проверены как минимум NASA GIBS и еще один кандидат.
+- Зафиксированы ограничения: разрешение, attribution, условия доступа, пригодность для offline.
+- Выбранный MVP-вариант добавлен в map provider config.
+
+**Tests:**
+Provider config tests покрывают выбранный спутниковый вариант.
+
+**Notes:**
+- Выбран default: `nasa-gibs-modis-terra-true-color`, слой NASA GIBS MODIS Terra Corrected Reflectance True Color через Web Mercator WMTS.
+- Ограничение выбранного слоя: `GoogleMapsCompatible_Level9`, максимум zoom 9 и примерно 305.75 метров на пиксель на лучшем native tile level; это юридически чистый, но не детальный городской satellite basemap.
+- Attribution хранится в provider config: `NASA GIBS / EOSDIS`; добавлены ссылки на документацию и условия использования NASA Earthdata.
+- Offline-пригодность: слой online-only; приложение не хранит базовые тайлы карты. Offline-пакеты или кеш - отдельная будущая задача.
+- Проверен OpenAerialMap как альтернативный кандидат: оставлен для будущего optional provider, потому что покрытие неравномерное и каталоговое, поэтому он слабый global default для MVP.
+- Проверено: frontend typecheck/lint/format/test/build/audit через Docker; provider tests покрывают NASA GIBS default, tile URL, attribution и ограничения.
