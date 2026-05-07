@@ -3,8 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   PaintedCellsApiError,
   buildPaintedCellsBboxUrl,
+  eraseCells,
   loadPaintedCellsInBbox,
   paintCells,
+  type CellRefInput,
   type PaintCellInput,
 } from "./paintedCells";
 
@@ -73,6 +75,27 @@ describe("painted cells API client", () => {
     const [url, init] = fetchMock.mock.calls[0]!;
 
     expect(url).toBe("/api/painted-cells/paint");
+    expect(init?.method).toBe("POST");
+    expect(init?.body).toBe(JSON.stringify({ cells }));
+    expect(result).toEqual({ requested: 1, changed: 1 });
+  });
+
+  it("sends erase batches to the backend", async () => {
+    const fetchMock = mockFetchJson({
+      requested: 1,
+      changed: 1,
+    });
+    const cells: CellRefInput[] = [
+      {
+        h3_id: "8b11aa7abdadfff",
+        resolution: 11,
+      },
+    ];
+
+    const result = await eraseCells(cells);
+    const [url, init] = fetchMock.mock.calls[0]!;
+
+    expect(url).toBe("/api/painted-cells/erase");
     expect(init?.method).toBe("POST");
     expect(init?.body).toBe(JSON.stringify({ cells }));
     expect(result).toEqual({ requested: 1, changed: 1 });

@@ -14,7 +14,11 @@ import {
   type H3CellFeatureCollection,
 } from "@/geo/h3Helpers";
 import { cn } from "@/lib/utils";
-import { collectNewPaintedH3Ids } from "@/paint/brush";
+import {
+  collectExistingPaintedH3Ids,
+  collectNewPaintedH3Ids,
+  type BrushMode,
+} from "@/paint/brush";
 import { areMapViewStatesEqual, type MapViewState } from "@/state/mapViewState";
 
 const H3_PREVIEW_SOURCE_ID = "h3-preview";
@@ -37,13 +41,14 @@ const EMPTY_PAINTED_CELLS_FEATURE_COLLECTION: H3CellFeatureCollection = {
 interface MapViewProps {
   className?: string;
   viewState: MapViewState;
-  paintModeEnabled?: boolean;
+  brushMode?: BrushMode | null;
   brushRadiusMeters?: number;
   paintedH3Ids?: readonly string[];
   onViewStateChange?: (viewState: MapViewState) => void;
   onViewportBoundsChange?: (bbox: PaintedCellsBbox) => void;
   onPaintCells?: (h3Ids: string[]) => void;
-  onPaintStrokeEnd?: () => void;
+  onEraseCells?: (h3Ids: string[]) => void;
+  onBrushStrokeEnd?: () => void;
 }
 
 function createRasterStyle(mode: MapMode): StyleSpecification {
@@ -117,6 +122,36 @@ function ensureH3PreviewLayers(map: maplibregl.Map): boolean {
   }
 
   return true;
+}
+
+function applyH3PreviewStyle(map: maplibregl.Map, brushMode: BrushMode | null): void {
+  if (!ensureH3PreviewLayers(map)) {
+    return;
+  }
+
+  const isEraseMode = brushMode === "erase";
+
+  map.setPaintProperty(
+    H3_PREVIEW_FILL_LAYER_ID,
+    "fill-color",
+    isEraseMode ? "#f97316" : "#22d3ee",
+  );
+  map.setPaintProperty(
+    H3_PREVIEW_FILL_LAYER_ID,
+    "fill-opacity",
+    isEraseMode ? 0.3 : 0.36,
+  );
+  map.setPaintProperty(
+    H3_PREVIEW_LINE_LAYER_ID,
+    "line-color",
+    isEraseMode ? "#fed7aa" : "#e0f2fe",
+  );
+  map.setPaintProperty(
+    H3_PREVIEW_LINE_LAYER_ID,
+    "line-opacity",
+    isEraseMode ? 1 : 0.95,
+  );
+  map.setPaintProperty(H3_PREVIEW_LINE_LAYER_ID, "line-width", isEraseMode ? 3 : 2);
 }
 
 function ensurePaintedCellsLayers(map: maplibregl.Map): boolean {
@@ -240,13 +275,14 @@ function readPaintedCellsBboxFromMap(map: maplibregl.Map): PaintedCellsBbox {
 export function MapView({
   className,
   viewState,
-  paintModeEnabled = false,
+  brushMode = null,
   brushRadiusMeters = DEFAULT_BRUSH_RADIUS_METERS,
   paintedH3Ids = [],
   onViewStateChange,
   onViewportBoundsChange,
   onPaintCells,
-  onPaintStrokeEnd,
+  onEraseCells,
+  onBrushStrokeEnd,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -254,11 +290,12 @@ export function MapView({
   const onViewStateChangeRef = useRef(onViewStateChange);
   const onViewportBoundsChangeRef = useRef(onViewportBoundsChange);
   const onPaintCellsRef = useRef(onPaintCells);
-  const onPaintStrokeEndRef = useRef(onPaintStrokeEnd);
+  const onEraseCellsRef = useRef(onEraseCells);
+  const onBrushStrokeEndRef = useRef(onBrushStrokeEnd);
   const appliedModeRef = useRef(viewState.mode);
   const isApplyingExternalStateRef = useRef(false);
   const currentPreviewH3CellRef = useRef<string | null>(null);
-  const paintModeEnabledRef = useRef(paintModeEnabled);
+  const brushModeRef = useRef<BrushMode | null>(brushMode);
   const brushRadiusMetersRef = useRef(brushRadiusMeters);
   const paintedH3IdSetRef = useRef<Set<string>>(new Set(paintedH3Ids));
   const isPaintingRef = useRef(false);
@@ -276,8 +313,12 @@ export function MapView({
   }, [onPaintCells]);
 
   useEffect(() => {
-    onPaintStrokeEndRef.current = onPaintStrokeEnd;
-  }, [onPaintStrokeEnd]);
+    onEraseCellsRef.current = onEraseCells;
+  }, [onEraseCells]);
+
+  useEffect(() => {
+    onBrushStrokeEndRef.current = onBrushStrokeEnd;
+  }, [onBrushStrokeEnd]);
 
   useEffect(() => {
     brushRadiusMetersRef.current = brushRadiusMeters;
@@ -297,7 +338,7 @@ export function MapView({
   }, [paintedH3Ids]);
 
   useEffect(() => {
-    paintModeEnabledRef.current = paintModeEnabled;
+    brushModeRef.current = brushMode;
 
     const map = mapRef.current;
 
@@ -305,14 +346,15 @@ export function MapView({
       return;
     }
 
-    map.getCanvas().style.cursor = paintModeEnabled ? "crosshair" : "";
+    map.getCanvas().style.cursor = getBrushCursor(brushMode);
+    applyH3PreviewStyle(map, brushMode);
 
-    if (!paintModeEnabled && isPaintingRef.current) {
+    if (!brushMode && isPaintingRef.current) {
       isPaintingRef.current = false;
       map.dragPan.enable();
-      onPaintStrokeEndRef.current?.();
+      onBrushStrokeEndRef.current?.();
     }
-  }, [paintModeEnabled]);
+  }, [brushMode]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) {
@@ -345,7 +387,7 @@ export function MapView({
 
     const handleStyleData = () => {
       syncPaintedCellsData();
-      ensureH3PreviewLayers(map);
+      applyH3PreviewStyle(map, brushModeRef.current);
 
       if (currentPreviewH3CellRef.current) {
         setH3PreviewData(
@@ -376,7 +418,13 @@ export function MapView({
       );
     };
 
-    const paintAtLngLat = (lngLat: maplibregl.LngLat) => {
+    const applyBrushAtLngLat = (lngLat: maplibregl.LngLat) => {
+      const activeBrushMode = brushModeRef.current;
+
+      if (!activeBrushMode) {
+        return;
+      }
+
       const brushH3Ids = getH3DiskForLngLat(
         {
           lng: wrapLongitude(lngLat.lng),
@@ -384,32 +432,52 @@ export function MapView({
         },
         brushRadiusMetersRef.current,
       );
-      const newH3Ids = collectNewPaintedH3Ids(paintedH3IdSetRef.current, brushH3Ids);
 
-      if (newH3Ids.length === 0) {
+      if (activeBrushMode === "paint") {
+        const newH3Ids = collectNewPaintedH3Ids(paintedH3IdSetRef.current, brushH3Ids);
+
+        if (newH3Ids.length === 0) {
+          return;
+        }
+
+        for (const h3Id of newH3Ids) {
+          paintedH3IdSetRef.current.add(h3Id);
+        }
+
+        syncPaintedCellsData();
+        onPaintCellsRef.current?.(newH3Ids);
         return;
       }
 
-      for (const h3Id of newH3Ids) {
-        paintedH3IdSetRef.current.add(h3Id);
+      const erasedH3Ids = collectExistingPaintedH3Ids(
+        paintedH3IdSetRef.current,
+        brushH3Ids,
+      );
+
+      if (erasedH3Ids.length === 0) {
+        return;
+      }
+
+      for (const h3Id of erasedH3Ids) {
+        paintedH3IdSetRef.current.delete(h3Id);
       }
 
       syncPaintedCellsData();
-      onPaintCellsRef.current?.(newH3Ids);
+      onEraseCellsRef.current?.(erasedH3Ids);
     };
 
-    const stopPainting = () => {
+    const stopBrushStroke = () => {
       if (!isPaintingRef.current) {
         return;
       }
 
       isPaintingRef.current = false;
       map.dragPan.enable();
-      onPaintStrokeEndRef.current?.();
+      onBrushStrokeEndRef.current?.();
     };
 
     const handleMouseDown = (event: maplibregl.MapMouseEvent) => {
-      if (!paintModeEnabledRef.current || event.originalEvent.button !== 0) {
+      if (!brushModeRef.current || event.originalEvent.button !== 0) {
         return;
       }
 
@@ -417,7 +485,7 @@ export function MapView({
       event.originalEvent.preventDefault();
       isPaintingRef.current = true;
       map.dragPan.disable();
-      paintAtLngLat(event.lngLat);
+      applyBrushAtLngLat(event.lngLat);
     };
 
     const handleMouseMove = (event: maplibregl.MapMouseEvent) => {
@@ -439,7 +507,7 @@ export function MapView({
 
       if (isPaintingRef.current) {
         event.preventDefault();
-        paintAtLngLat(event.lngLat);
+        applyBrushAtLngLat(event.lngLat);
       }
     };
 
@@ -454,29 +522,30 @@ export function MapView({
 
     const canvas = map.getCanvas();
 
-    canvas.style.cursor = paintModeEnabledRef.current ? "crosshair" : "";
+    canvas.style.cursor = getBrushCursor(brushModeRef.current);
+    applyH3PreviewStyle(map, brushModeRef.current);
 
     map.on("load", handleMapLoad);
     map.on("styledata", handleStyleData);
     map.on("moveend", handleMoveEnd);
     map.on("mousedown", handleMouseDown);
     map.on("mousemove", handleMouseMove);
-    map.on("mouseup", stopPainting);
+    map.on("mouseup", stopBrushStroke);
     canvas.addEventListener("mouseleave", clearPreview);
-    window.addEventListener("mouseup", stopPainting);
+    window.addEventListener("mouseup", stopBrushStroke);
 
     mapRef.current = map;
 
     return () => {
-      stopPainting();
+      stopBrushStroke();
       map.off("load", handleMapLoad);
       map.off("styledata", handleStyleData);
       map.off("moveend", handleMoveEnd);
       map.off("mousedown", handleMouseDown);
       map.off("mousemove", handleMouseMove);
-      map.off("mouseup", stopPainting);
+      map.off("mouseup", stopBrushStroke);
       canvas.removeEventListener("mouseleave", clearPreview);
-      window.removeEventListener("mouseup", stopPainting);
+      window.removeEventListener("mouseup", stopBrushStroke);
       map.remove();
       mapRef.current = null;
     };
@@ -548,4 +617,16 @@ function clampLatitude(lat: number): number {
   }
 
   return Math.max(-90, Math.min(90, lat));
+}
+
+function getBrushCursor(brushMode: BrushMode | null): string {
+  if (brushMode === "paint") {
+    return "crosshair";
+  }
+
+  if (brushMode === "erase") {
+    return "not-allowed";
+  }
+
+  return "";
 }

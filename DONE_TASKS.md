@@ -389,3 +389,30 @@ Unit-тесты на brush/H3 helper logic. Rust persistence уже покрыт
 - `MapView` получил технический `data-painted-cell-count` для E2E-проверки размера текущего frontend overlay state.
 - Проверено через Docker: backend fmt, test, clippy; frontend typecheck, lint, format, Vitest, build и npm audit.
 - E2E-проверка в локальном compose: headless Chrome нарисовал 12 временных cells в viewport A, при загрузке viewport B frontend count стал 0, при возврате в viewport A count снова стал 12 и совпал с API; runtime exceptions не было. Проверочные cells удалены, `map.view` восстановлен.
+
+---
+
+## FOG-016 - Режим Ластика
+
+**Status:** Done
+
+**Description:**
+Добавить erase mode, который использует ту же brush geometry, но удаляет ячейки из storage и overlay.
+
+**Acceptance:**
+- Ластик удаляет видимые painted cells.
+- Удаленные ячейки не появляются после restart.
+- Paint и erase mode переключаются без remount карты.
+
+**Tests:**
+Unit-тесты на shared brush mode helpers, если они будут выделены.
+
+**Notes:**
+- Добавлен отдельный erase mode с кнопкой ластика в toolbar; paint и erase переключаются через общий `brushMode` без remount MapLibre-карты.
+- Ластик использует ту же H3 brush geometry, что и кисть, но удаляет только уже видимые painted cells из overlay.
+- Pending paint и erase операции взаимно отменяются для одной H3-ячейки, чтобы быстрые локальные изменения не сохраняли устаревшее состояние.
+- Сохранение батчится после завершения stroke: erase batches отправляются перед paint batches, а не на каждое mouse event.
+- Preview и cursor визуально отличаются: paint использует cyan/crosshair, erase - orange/not-allowed.
+- Viewport reload учитывает локально стертые, но еще не сохраненные cells, чтобы stale bbox result не возвращал их в overlay.
+- Проверено через Docker: frontend typecheck, lint, format, Vitest, build и npm audit.
+- E2E-проверка в локальном compose: headless Chrome поставил 7 временных cells кистью, стер их ластиком до frontend count 0, после reload cells не вернулись. Проверочные данные очищены, `map.view` восстановлен.

@@ -27,26 +27,6 @@
 - Источники карт должны быть заменяемыми. Публичные OSM tiles можно использовать на раннем этапе разработки, но архитектура не должна быть жестко привязана к ним.
 - Спутниковый режим должен быть конфигурируемым. Предпочтительные источники - бесплатные/open варианты вроде NASA GIBS, OpenAerialMap или Sentinel/Copernicus-derived слоев. Esri World Imagery можно рассматривать только как optional-слой для личного использования с attribution и зафиксированными ограничениями.
 
-## FOG-016 - Режим Ластика
-
-**Status:** Todo
-
-**Description:**
-Добавить erase mode, который использует ту же brush geometry, но удаляет ячейки из storage и overlay.
-
-**Acceptance:**
-- Ластик удаляет видимые painted cells.
-- Удаленные ячейки не появляются после restart.
-- Paint и erase mode переключаются без remount карты.
-
-**Tests:**
-Unit-тесты на shared brush mode helpers, если они будут выделены.
-
-**Notes:**
-- Cursor/preview должен визуально отличать erase mode.
-
----
-
 ## FOG-017 - Начальная Панель Инструментов
 
 **Status:** Todo

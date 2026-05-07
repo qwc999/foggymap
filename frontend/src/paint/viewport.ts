@@ -15,6 +15,7 @@ export function getPaintedCellsBboxSignature({
 export function createViewportPaintedH3Ids(
   loadedH3Ids: Iterable<string>,
   localPaintedH3Ids: Iterable<string> = [],
+  localErasedH3Ids: Iterable<string> = [],
 ): string[] {
   const visibleH3Ids = new Set<string>();
 
@@ -24,6 +25,10 @@ export function createViewportPaintedH3Ids(
 
   for (const h3Id of localPaintedH3Ids) {
     visibleH3Ids.add(h3Id);
+  }
+
+  for (const h3Id of localErasedH3Ids) {
+    visibleH3Ids.delete(h3Id);
   }
 
   return [...visibleH3Ids];

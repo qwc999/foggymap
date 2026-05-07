@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Brush, MapPinned, Satellite } from "lucide-react";
+import { Brush, Eraser, MapPinned, Satellite } from "lucide-react";
 
 import { loadAppState, saveAppState, type JsonValue } from "@/api/appState";
 import {
+  eraseCells,
   loadPaintedCellsInBbox,
   paintCells,
   type PaintedCellsBbox,
@@ -12,7 +13,14 @@ import { Button } from "@/components/ui/button";
 import { DEFAULT_BRUSH_RADIUS_METERS } from "@/config/h3";
 import type { MapMode } from "@/config/mapProviders";
 import { cn } from "@/lib/utils";
-import { chunkPaintCellInputs, createPaintCellInputs } from "@/paint/brush";
+import {
+  chunkCellRefInputs,
+  chunkPaintCellInputs,
+  createCellRefInputs,
+  createPaintCellInputs,
+  removePaintedH3Ids,
+  type BrushMode,
+} from "@/paint/brush";
 import {
   PAINTED_CELLS_VIEWPORT_DEBOUNCE_MS,
   PAINTED_CELLS_VIEWPORT_QUERY_LIMIT,
@@ -45,7 +53,7 @@ export function App() {
     useState<MapViewState>(DEFAULT_MAP_VIEW_STATE);
   const [mapPersistenceState, setMapPersistenceState] =
     useState<MapPersistenceState>("loading");
-  const [paintModeEnabled, setPaintModeEnabled] = useState(false);
+  const [brushMode, setBrushMode] = useState<BrushMode | null>(null);
   const [paintedH3Ids, setPaintedH3Ids] = useState<string[]>([]);
   const [paintedCellsViewportBbox, setPaintedCellsViewportBbox] =
     useState<PaintedCellsBbox | null>(null);
@@ -55,7 +63,8 @@ export function App() {
   const saveSequenceRef = useRef(0);
   const paintedH3IdSetRef = useRef<Set<string>>(new Set());
   const pendingPaintH3IdsRef = useRef<Set<string>>(new Set());
-  const isSavingPaintCellsRef = useRef(false);
+  const pendingEraseH3IdsRef = useRef<Set<string>>(new Set());
+  const isSavingPaintMutationsRef = useRef(false);
   const viewportLoadSequenceRef = useRef(0);
 
   useEffect(() => {
@@ -178,39 +187,71 @@ export function App() {
     return nextH3Ids;
   }, []);
 
-  const flushPendingPaintCells = useCallback(() => {
-    if (isSavingPaintCellsRef.current || pendingPaintH3IdsRef.current.size === 0) {
+  const removeVisiblePaintedH3Ids = useCallback((h3Ids: readonly string[]) => {
+    const erasedH3Ids = h3Ids.filter((h3Id) => paintedH3IdSetRef.current.has(h3Id));
+
+    if (erasedH3Ids.length > 0) {
+      paintedH3IdSetRef.current = new Set(
+        removePaintedH3Ids([...paintedH3IdSetRef.current], erasedH3Ids),
+      );
+      setPaintedH3Ids([...paintedH3IdSetRef.current]);
+    }
+
+    return erasedH3Ids;
+  }, []);
+
+  const flushPendingPaintMutations = useCallback(() => {
+    if (
+      isSavingPaintMutationsRef.current ||
+      (pendingPaintH3IdsRef.current.size === 0 &&
+        pendingEraseH3IdsRef.current.size === 0)
+    ) {
       return;
     }
 
-    const h3Ids = [...pendingPaintH3IdsRef.current];
+    const paintH3Ids = [...pendingPaintH3IdsRef.current];
+    const eraseH3Ids = [...pendingEraseH3IdsRef.current];
     pendingPaintH3IdsRef.current.clear();
-    isSavingPaintCellsRef.current = true;
+    pendingEraseH3IdsRef.current.clear();
+    isSavingPaintMutationsRef.current = true;
     setPaintPersistenceState("saving");
 
     void (async () => {
       let shouldFlushAgain = false;
 
       try {
-        const cells = createPaintCellInputs(h3Ids);
+        const cellRefs = createCellRefInputs(eraseH3Ids);
+        const cells = createPaintCellInputs(paintH3Ids);
 
+        for (const batch of chunkCellRefInputs(cellRefs)) {
+          await eraseCells(batch);
+        }
         for (const batch of chunkPaintCellInputs(cells)) {
           await paintCells(batch);
         }
 
-        shouldFlushAgain = pendingPaintH3IdsRef.current.size > 0;
+        shouldFlushAgain =
+          pendingPaintH3IdsRef.current.size > 0 ||
+          pendingEraseH3IdsRef.current.size > 0;
         setPaintPersistenceState("saved");
       } catch {
-        for (const h3Id of h3Ids) {
-          pendingPaintH3IdsRef.current.add(h3Id);
+        for (const h3Id of paintH3Ids) {
+          if (!pendingEraseH3IdsRef.current.has(h3Id)) {
+            pendingPaintH3IdsRef.current.add(h3Id);
+          }
+        }
+        for (const h3Id of eraseH3Ids) {
+          if (!pendingPaintH3IdsRef.current.has(h3Id)) {
+            pendingEraseH3IdsRef.current.add(h3Id);
+          }
         }
 
         setPaintPersistenceState("error");
       } finally {
-        isSavingPaintCellsRef.current = false;
+        isSavingPaintMutationsRef.current = false;
 
         if (shouldFlushAgain) {
-          flushPendingPaintCells();
+          flushPendingPaintMutations();
         }
       }
     })();
@@ -241,6 +282,7 @@ export function App() {
             createViewportPaintedH3Ids(
               result.cells.map((cell) => cell.h3_id),
               pendingPaintH3IdsRef.current,
+              pendingEraseH3IdsRef.current,
             ),
           );
           setPaintPersistenceState((currentState) =>
@@ -295,10 +337,25 @@ export function App() {
       const newH3Ids = addVisiblePaintedH3Ids(h3Ids);
 
       for (const h3Id of newH3Ids) {
-        pendingPaintH3IdsRef.current.add(h3Id);
+        if (!pendingEraseH3IdsRef.current.delete(h3Id)) {
+          pendingPaintH3IdsRef.current.add(h3Id);
+        }
       }
     },
     [addVisiblePaintedH3Ids],
+  );
+
+  const handleEraseCells = useCallback(
+    (h3Ids: string[]) => {
+      const erasedH3Ids = removeVisiblePaintedH3Ids(h3Ids);
+
+      for (const h3Id of erasedH3Ids) {
+        if (!pendingPaintH3IdsRef.current.delete(h3Id)) {
+          pendingEraseH3IdsRef.current.add(h3Id);
+        }
+      }
+    },
+    [removeVisiblePaintedH3Ids],
   );
 
   return (
@@ -306,13 +363,14 @@ export function App() {
       <MapView
         className="absolute inset-0"
         viewState={mapViewState}
-        paintModeEnabled={paintModeEnabled}
+        brushMode={brushMode}
         brushRadiusMeters={DEFAULT_BRUSH_RADIUS_METERS}
         paintedH3Ids={paintedH3Ids}
         onViewStateChange={handleMapViewStateChange}
         onViewportBoundsChange={handlePaintedCellsViewportChange}
         onPaintCells={handlePaintCells}
-        onPaintStrokeEnd={flushPendingPaintCells}
+        onEraseCells={handleEraseCells}
+        onBrushStrokeEnd={flushPendingPaintMutations}
       />
 
       <div className="absolute left-4 top-4 z-10 flex items-center gap-2 rounded-lg border border-border bg-background/72 p-2 shadow-2xl backdrop-blur">
@@ -335,17 +393,30 @@ export function App() {
           Satellite
         </Button>
         <Button
-          variant={paintModeEnabled ? "default" : "secondary"}
+          variant={brushMode === "paint" ? "default" : "secondary"}
           size="icon"
           aria-label="Brush"
-          aria-pressed={paintModeEnabled}
+          aria-pressed={brushMode === "paint"}
           title={`Brush: ${DEFAULT_BRUSH_RADIUS_METERS}m`}
           data-testid="paint-mode"
           onClick={() => {
-            setPaintModeEnabled((currentValue) => !currentValue);
+            setBrushMode((currentMode) => (currentMode === "paint" ? null : "paint"));
           }}
         >
           <Brush className="h-4 w-4" />
+        </Button>
+        <Button
+          variant={brushMode === "erase" ? "default" : "secondary"}
+          size="icon"
+          aria-label="Eraser"
+          aria-pressed={brushMode === "erase"}
+          title={`Eraser: ${DEFAULT_BRUSH_RADIUS_METERS}m`}
+          data-testid="erase-mode"
+          onClick={() => {
+            setBrushMode((currentMode) => (currentMode === "erase" ? null : "erase"));
+          }}
+        >
+          <Eraser className="h-4 w-4" />
         </Button>
       </div>
 

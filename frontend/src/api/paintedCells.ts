@@ -9,6 +9,11 @@ export interface PaintedCell extends PaintCellInput {
   painted_at: string;
 }
 
+export interface CellRefInput {
+  h3_id: string;
+  resolution: number;
+}
+
 export interface PaintedCellsBbox {
   west: number;
   south: number;
@@ -78,6 +83,23 @@ export async function paintCells(
   cells: PaintCellInput[],
 ): Promise<BatchMutationResponse> {
   const response = await fetch("/api/painted-cells/paint", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ cells }),
+  });
+
+  await throwIfRequestFailed(response);
+
+  return (await response.json()) as BatchMutationResponse;
+}
+
+export async function eraseCells(
+  cells: CellRefInput[],
+): Promise<BatchMutationResponse> {
+  const response = await fetch("/api/painted-cells/erase", {
     method: "POST",
     headers: {
       Accept: "application/json",

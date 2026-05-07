@@ -28,4 +28,14 @@ describe("painted cells viewport helpers", () => {
 
     expect(visibleH3Ids).toEqual(["loaded-a", "loaded-b", "local-c"]);
   });
+
+  it("removes locally erased cells from stale load results", () => {
+    const visibleH3Ids = createViewportPaintedH3Ids(
+      ["loaded-a", "loaded-b", "loaded-c"],
+      ["local-d"],
+      ["loaded-b", "local-d"],
+    );
+
+    expect(visibleH3Ids).toEqual(["loaded-a", "loaded-c"]);
+  });
 });
