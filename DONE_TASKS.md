@@ -416,3 +416,31 @@ Unit-тесты на shared brush mode helpers, если они будут вы�
 - Viewport reload учитывает локально стертые, но еще не сохраненные cells, чтобы stale bbox result не возвращал их в overlay.
 - Проверено через Docker: frontend typecheck, lint, format, Vitest, build и npm audit.
 - E2E-проверка в локальном compose: headless Chrome поставил 7 временных cells кистью, стер их ластиком до frontend count 0, после reload cells не вернулись. Проверочные данные очищены, `map.view` восстановлен.
+
+---
+
+## FOG-017 - Начальная Панель Инструментов
+
+**Status:** Done
+
+**Description:**
+Создать компактный современный toolbar поверх карты: переключение режима карты, paint/erase tools, brush size control и disabled home button placeholder.
+
+**Acceptance:**
+- Контролы toolbar влияют на поведение карты.
+- Размер кисти сохраняется.
+- Контролы не перекрывают attribution и важные map interactions.
+- UI usable на типичных desktop-размерах окна.
+
+**Tests:**
+Component tests для состояния toolbar, если это будет полезно.
+
+**Notes:**
+- Toolbar вынесен в `frontend/src/components/toolbar/AppToolbar.tsx`.
+- Панель использует icon-only controls для map/satellite, brush/eraser и disabled home placeholder.
+- Добавлен slider + numeric input для размера кисти; интерактивный диапазон ограничен 5-500м, default остается 30м.
+- Размер кисти сохраняется через app-state key `brush.radiusMeters` и восстанавливается после reload/restart.
+- `App` передает выбранный размер кисти в `MapView`, поэтому brush geometry реально меняется при работе с картой.
+- Добавлены тесты `AppToolbar.test.tsx` и `brushSettings.test.ts`.
+- Проверено через Docker: frontend format, typecheck, Vitest, lint, build и npm audit.
+- E2E-проверка в локальном compose: headless Chrome проверил отображение toolbar, переключение map/paint/erase, disabled Home, отсутствие overlap с attribution/navigation и сохранение brush radius `75` после reload. Проверочные значения `map.view` и `brush.radiusMeters` восстановлены.

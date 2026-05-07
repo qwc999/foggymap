@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Brush, Eraser, MapPinned, Satellite } from "lucide-react";
 
 import { loadAppState, saveAppState, type JsonValue } from "@/api/appState";
 import {
@@ -9,8 +8,7 @@ import {
   type PaintedCellsBbox,
 } from "@/api/paintedCells";
 import { MapView } from "@/components/map/MapView";
-import { Button } from "@/components/ui/button";
-import { DEFAULT_BRUSH_RADIUS_METERS } from "@/config/h3";
+import { AppToolbar } from "@/components/toolbar/AppToolbar";
 import type { MapMode } from "@/config/mapProviders";
 import { cn } from "@/lib/utils";
 import {
@@ -36,9 +34,16 @@ import {
   serializeMapViewState,
   type MapViewState,
 } from "@/state/mapViewState";
+import {
+  BRUSH_RADIUS_STATE_KEY,
+  normalizeBrushRadiusMeters,
+  sanitizeBrushRadiusMeters,
+  serializeBrushRadiusMeters,
+} from "@/state/brushSettings";
 
 type HealthState = "loading" | "ok" | "error";
 type MapPersistenceState = "loading" | "saved" | "saving" | "error";
+type BrushPersistenceState = "loading" | "saved" | "saving" | "error";
 type PaintPersistenceState =
   | "idle"
   | "loading"
@@ -54,13 +59,20 @@ export function App() {
   const [mapPersistenceState, setMapPersistenceState] =
     useState<MapPersistenceState>("loading");
   const [brushMode, setBrushMode] = useState<BrushMode | null>(null);
+  const [brushRadiusMeters, setBrushRadiusMeters] = useState(() =>
+    normalizeBrushRadiusMeters(null),
+  );
+  const [brushPersistenceState, setBrushPersistenceState] =
+    useState<BrushPersistenceState>("loading");
   const [paintedH3Ids, setPaintedH3Ids] = useState<string[]>([]);
   const [paintedCellsViewportBbox, setPaintedCellsViewportBbox] =
     useState<PaintedCellsBbox | null>(null);
   const [paintPersistenceState, setPaintPersistenceState] =
     useState<PaintPersistenceState>("idle");
   const lastPersistedMapStateSignatureRef = useRef<string | null>(null);
+  const lastPersistedBrushRadiusRef = useRef<number | null>(null);
   const saveSequenceRef = useRef(0);
+  const brushSaveSequenceRef = useRef(0);
   const paintedH3IdSetRef = useRef<Set<string>>(new Set());
   const pendingPaintH3IdsRef = useRef<Set<string>>(new Set());
   const pendingEraseH3IdsRef = useRef<Set<string>>(new Set());
@@ -162,6 +174,82 @@ export function App() {
       window.clearTimeout(timeoutId);
     };
   }, [mapPersistenceState, mapViewState]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    loadAppState<JsonValue>(BRUSH_RADIUS_STATE_KEY)
+      .then((storedValue) => {
+        if (cancelled) {
+          return;
+        }
+
+        const nextBrushRadiusMeters = normalizeBrushRadiusMeters(storedValue);
+
+        lastPersistedBrushRadiusRef.current = nextBrushRadiusMeters;
+        setBrushRadiusMeters(nextBrushRadiusMeters);
+        setBrushPersistenceState("saved");
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+
+        lastPersistedBrushRadiusRef.current = normalizeBrushRadiusMeters(null);
+        setBrushPersistenceState("error");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (brushPersistenceState === "loading") {
+      return;
+    }
+
+    const normalizedBrushRadiusMeters = sanitizeBrushRadiusMeters(brushRadiusMeters);
+
+    if (normalizedBrushRadiusMeters !== brushRadiusMeters) {
+      setBrushRadiusMeters(normalizedBrushRadiusMeters);
+      return;
+    }
+
+    if (normalizedBrushRadiusMeters === lastPersistedBrushRadiusRef.current) {
+      return;
+    }
+
+    const saveSequence = brushSaveSequenceRef.current + 1;
+    brushSaveSequenceRef.current = saveSequence;
+    setBrushPersistenceState("saving");
+
+    const timeoutId = window.setTimeout(() => {
+      saveAppState(
+        BRUSH_RADIUS_STATE_KEY,
+        serializeBrushRadiusMeters(normalizedBrushRadiusMeters),
+      )
+        .then(() => {
+          if (brushSaveSequenceRef.current !== saveSequence) {
+            return;
+          }
+
+          lastPersistedBrushRadiusRef.current = normalizedBrushRadiusMeters;
+          setBrushPersistenceState("saved");
+        })
+        .catch(() => {
+          if (brushSaveSequenceRef.current !== saveSequence) {
+            return;
+          }
+
+          setBrushPersistenceState("error");
+        });
+    }, 500);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [brushPersistenceState, brushRadiusMeters]);
 
   const replaceVisiblePaintedH3Ids = useCallback((h3Ids: readonly string[]) => {
     paintedH3IdSetRef.current = new Set(h3Ids);
@@ -323,6 +411,10 @@ export function App() {
     );
   }, []);
 
+  const handleBrushRadiusChange = useCallback((radiusMeters: number) => {
+    setBrushRadiusMeters(sanitizeBrushRadiusMeters(radiusMeters));
+  }, []);
+
   const handlePaintedCellsViewportChange = useCallback((bbox: PaintedCellsBbox) => {
     setPaintedCellsViewportBbox((currentBbox) =>
       currentBbox &&
@@ -364,7 +456,7 @@ export function App() {
         className="absolute inset-0"
         viewState={mapViewState}
         brushMode={brushMode}
-        brushRadiusMeters={DEFAULT_BRUSH_RADIUS_METERS}
+        brushRadiusMeters={brushRadiusMeters}
         paintedH3Ids={paintedH3Ids}
         onViewStateChange={handleMapViewStateChange}
         onViewportBoundsChange={handlePaintedCellsViewportChange}
@@ -373,52 +465,14 @@ export function App() {
         onBrushStrokeEnd={flushPendingPaintMutations}
       />
 
-      <div className="absolute left-4 top-4 z-10 flex items-center gap-2 rounded-lg border border-border bg-background/72 p-2 shadow-2xl backdrop-blur">
-        <Button
-          variant={mapViewState.mode === "street" ? "default" : "secondary"}
-          aria-pressed={mapViewState.mode === "street"}
-          data-testid="street-map-mode"
-          onClick={() => handleMapModeChange("street")}
-        >
-          <MapPinned className="h-4 w-4" />
-          Map
-        </Button>
-        <Button
-          variant={mapViewState.mode === "satellite" ? "default" : "secondary"}
-          aria-pressed={mapViewState.mode === "satellite"}
-          data-testid="satellite-map-mode"
-          onClick={() => handleMapModeChange("satellite")}
-        >
-          <Satellite className="h-4 w-4" />
-          Satellite
-        </Button>
-        <Button
-          variant={brushMode === "paint" ? "default" : "secondary"}
-          size="icon"
-          aria-label="Brush"
-          aria-pressed={brushMode === "paint"}
-          title={`Brush: ${DEFAULT_BRUSH_RADIUS_METERS}m`}
-          data-testid="paint-mode"
-          onClick={() => {
-            setBrushMode((currentMode) => (currentMode === "paint" ? null : "paint"));
-          }}
-        >
-          <Brush className="h-4 w-4" />
-        </Button>
-        <Button
-          variant={brushMode === "erase" ? "default" : "secondary"}
-          size="icon"
-          aria-label="Eraser"
-          aria-pressed={brushMode === "erase"}
-          title={`Eraser: ${DEFAULT_BRUSH_RADIUS_METERS}m`}
-          data-testid="erase-mode"
-          onClick={() => {
-            setBrushMode((currentMode) => (currentMode === "erase" ? null : "erase"));
-          }}
-        >
-          <Eraser className="h-4 w-4" />
-        </Button>
-      </div>
+      <AppToolbar
+        brushMode={brushMode}
+        brushRadiusMeters={brushRadiusMeters}
+        mapMode={mapViewState.mode}
+        onBrushModeChange={setBrushMode}
+        onBrushRadiusChange={handleBrushRadiusChange}
+        onMapModeChange={handleMapModeChange}
+      />
 
       <div className="absolute bottom-4 left-4 z-10 flex items-center gap-3 rounded-lg border border-border bg-background/72 px-4 py-3 text-sm text-slate-200 shadow-2xl backdrop-blur">
         <span
@@ -444,6 +498,17 @@ export function App() {
             : mapPersistenceState === "saving"
               ? "saving"
               : mapPersistenceState === "saved"
+                ? "saved"
+                : "error"}
+        </span>
+        <span className="text-slate-500">/</span>
+        <span>
+          Brush:{" "}
+          {brushPersistenceState === "loading"
+            ? "loading"
+            : brushPersistenceState === "saving"
+              ? "saving"
+              : brushPersistenceState === "saved"
                 ? "saved"
                 : "error"}
         </span>

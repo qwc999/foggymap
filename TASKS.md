@@ -27,27 +27,6 @@
 - Источники карт должны быть заменяемыми. Публичные OSM tiles можно использовать на раннем этапе разработки, но архитектура не должна быть жестко привязана к ним.
 - Спутниковый режим должен быть конфигурируемым. Предпочтительные источники - бесплатные/open варианты вроде NASA GIBS, OpenAerialMap или Sentinel/Copernicus-derived слоев. Esri World Imagery можно рассматривать только как optional-слой для личного использования с attribution и зафиксированными ограничениями.
 
-## FOG-017 - Начальная Панель Инструментов
-
-**Status:** Todo
-
-**Description:**
-Создать компактный современный toolbar поверх карты: переключение режима карты, paint/erase tools, brush size control и disabled home button placeholder.
-
-**Acceptance:**
-- Контролы toolbar влияют на поведение карты.
-- Размер кисти сохраняется.
-- Контролы не перекрывают attribution и важные map interactions.
-- UI usable на типичных desktop-размерах окна.
-
-**Tests:**
-Component tests для состояния toolbar, если это будет полезно.
-
-**Notes:**
-- Для tool buttons использовать иконки там, где это уместно.
-
----
-
 ## FOG-018 - Home Location
 
 **Status:** Todo
