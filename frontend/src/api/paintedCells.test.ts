@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   PaintedCellsApiError,
+  buildPaintedCellsBboxUrl,
   loadPaintedCellsInBbox,
   paintCells,
   type PaintCellInput,
@@ -23,19 +24,35 @@ describe("painted cells API client", () => {
           painted_at: "2026-05-06T18:00:00.000Z",
         },
       ],
+      limit: 500,
+      truncated: false,
     });
 
-    const cells = await loadPaintedCellsInBbox({
+    const result = await loadPaintedCellsInBbox({
       west: 37,
       south: 55,
       east: 38,
       north: 56,
+      limit: 500,
     });
     const [url, init] = fetchMock.mock.calls[0]!;
 
-    expect(url).toBe("/api/painted-cells?west=37&south=55&east=38&north=56");
+    expect(url).toBe("/api/painted-cells?west=37&south=55&east=38&north=56&limit=500");
     expect(init?.method).toBe("GET");
-    expect(cells).toHaveLength(1);
+    expect(result.cells).toHaveLength(1);
+    expect(result.limit).toBe(500);
+    expect(result.truncated).toBe(false);
+  });
+
+  it("builds bbox URLs without optional query values", () => {
+    expect(
+      buildPaintedCellsBboxUrl({
+        west: -180,
+        south: -90,
+        east: 180,
+        north: 90,
+      }),
+    ).toBe("/api/painted-cells?west=-180&south=-90&east=180&north=90");
   });
 
   it("sends paint batches to the backend", async () => {

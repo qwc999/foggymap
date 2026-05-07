@@ -91,6 +91,12 @@ pub struct Bbox {
     pub north: f64,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct BboxCellsPage {
+    pub cells: Vec<PaintedCell>,
+    pub truncated: bool,
+}
+
 impl Display for AppStateKeyError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
@@ -336,10 +342,22 @@ pub fn erase_cells(connection: &mut Connection, cells: &[CellRef]) -> rusqlite::
     Ok(changed)
 }
 
-pub fn get_cells_in_bbox(
+pub fn get_cells_in_bbox_limited(
     connection: &Connection,
     bbox: Bbox,
-) -> rusqlite::Result<Vec<PaintedCell>> {
+    limit: usize,
+) -> rusqlite::Result<BboxCellsPage> {
+    query_cells_in_bbox(connection, bbox, Some(limit))
+}
+
+fn query_cells_in_bbox(
+    connection: &Connection,
+    bbox: Bbox,
+    limit: Option<usize>,
+) -> rusqlite::Result<BboxCellsPage> {
+    let fetch_limit = limit
+        .map(|limit| i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX))
+        .unwrap_or(i64::MAX);
     let mut statement = connection.prepare(
         r#"
         SELECT h3_id, resolution, centroid_lng, centroid_lat, painted_at
@@ -352,12 +370,13 @@ pub fn get_cells_in_bbox(
                 (?1 > ?3 AND (centroid_lng >= ?1 OR centroid_lng <= ?3))
             )
         ORDER BY h3_id, resolution
+        LIMIT ?5
         "#,
     )?;
 
-    let cells = statement
+    let mut cells: Vec<PaintedCell> = statement
         .query_map(
-            params![bbox.west, bbox.south, bbox.east, bbox.north],
+            params![bbox.west, bbox.south, bbox.east, bbox.north, fetch_limit],
             |row| {
                 Ok(PaintedCell {
                     h3_id: row.get(0)?,
@@ -368,9 +387,14 @@ pub fn get_cells_in_bbox(
                 })
             },
         )?
-        .collect();
+        .collect::<rusqlite::Result<_>>()?;
+    let truncated = limit.is_some_and(|limit| cells.len() > limit);
 
-    cells
+    if let Some(limit) = limit.filter(|_| truncated) {
+        cells.truncate(limit);
+    }
+
+    Ok(BboxCellsPage { cells, truncated })
 }
 
 #[cfg(test)]
@@ -384,7 +408,7 @@ mod tests {
     use rusqlite::{params, Connection};
 
     use super::{
-        erase_cells, get_cells_in_bbox, initialize_connection, initialize_database,
+        erase_cells, get_cells_in_bbox_limited, initialize_connection, initialize_database,
         load_app_state_value, paint_cells, save_app_state_value, validate_app_state_key,
         AppStateKeyError, Bbox, CellRef, PaintCellInput,
     };
@@ -623,7 +647,7 @@ mod tests {
             ],
         )
         .expect("erase cells");
-        let remaining = get_cells_in_bbox(
+        let remaining = get_cells_in_bbox_limited(
             &connection,
             Bbox {
                 west: 37.0,
@@ -631,8 +655,10 @@ mod tests {
                 east: 38.0,
                 north: 56.0,
             },
+            100,
         )
-        .expect("query remaining cells");
+        .expect("query remaining cells")
+        .cells;
 
         assert_eq!(changed, 2);
         assert_eq!(
@@ -655,7 +681,7 @@ mod tests {
         ];
         paint_cells(&mut connection, &cells).expect("seed painted cells");
 
-        let visible_cells = get_cells_in_bbox(
+        let visible_cells = get_cells_in_bbox_limited(
             &connection,
             Bbox {
                 west: 37.0,
@@ -663,8 +689,10 @@ mod tests {
                 east: 38.0,
                 north: 56.0,
             },
+            100,
         )
-        .expect("query bbox");
+        .expect("query bbox")
+        .cells;
 
         assert_eq!(
             visible_cells
@@ -685,7 +713,7 @@ mod tests {
         ];
         paint_cells(&mut connection, &cells).expect("seed painted cells");
 
-        let visible_cells = get_cells_in_bbox(
+        let visible_cells = get_cells_in_bbox_limited(
             &connection,
             Bbox {
                 west: 179.0,
@@ -693,8 +721,10 @@ mod tests {
                 east: -179.0,
                 north: 11.0,
             },
+            100,
         )
-        .expect("query antimeridian bbox");
+        .expect("query antimeridian bbox")
+        .cells;
 
         assert_eq!(
             visible_cells
@@ -703,6 +733,63 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["east-side", "west-side"]
         );
+    }
+
+    #[test]
+    fn get_cells_in_bbox_limited_reports_truncation() {
+        let mut connection = initialized_in_memory_connection();
+        let cells = vec![
+            paint_cell("inside-a", 37.1, 55.1),
+            paint_cell("inside-b", 37.2, 55.2),
+            paint_cell("inside-c", 37.3, 55.3),
+        ];
+        paint_cells(&mut connection, &cells).expect("seed painted cells");
+
+        let page = get_cells_in_bbox_limited(
+            &connection,
+            Bbox {
+                west: 37.0,
+                south: 55.0,
+                east: 38.0,
+                north: 56.0,
+            },
+            2,
+        )
+        .expect("query limited bbox");
+
+        assert_eq!(
+            page.cells
+                .iter()
+                .map(|cell| cell.h3_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["inside-a", "inside-b"]
+        );
+        assert!(page.truncated);
+    }
+
+    #[test]
+    fn get_cells_in_bbox_limited_does_not_report_truncation_under_limit() {
+        let mut connection = initialized_in_memory_connection();
+        let cells = vec![
+            paint_cell("inside-a", 37.1, 55.1),
+            paint_cell("inside-b", 37.2, 55.2),
+        ];
+        paint_cells(&mut connection, &cells).expect("seed painted cells");
+
+        let page = get_cells_in_bbox_limited(
+            &connection,
+            Bbox {
+                west: 37.0,
+                south: 55.0,
+                east: 38.0,
+                north: 56.0,
+            },
+            2,
+        )
+        .expect("query limited bbox");
+
+        assert_eq!(page.cells.len(), 2);
+        assert!(!page.truncated);
     }
 
     #[test]

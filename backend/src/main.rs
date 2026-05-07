@@ -15,6 +15,8 @@ use tower_http::cors::{Any, CorsLayer};
 mod db;
 
 const MAX_PAINTED_CELLS_BATCH_LEN: usize = 10_000;
+const DEFAULT_PAINTED_CELLS_QUERY_LIMIT: usize = 20_000;
+const MAX_PAINTED_CELLS_QUERY_LIMIT: usize = 50_000;
 const MAX_H3_ID_LEN: usize = 32;
 
 #[derive(Clone)]
@@ -61,11 +63,14 @@ struct PaintedCellsQuery {
     south: f64,
     east: f64,
     north: f64,
+    limit: Option<usize>,
 }
 
 #[derive(Serialize)]
 struct PaintedCellsResponse {
     cells: Vec<db::PaintedCell>,
+    limit: usize,
+    truncated: bool,
 }
 
 #[derive(Serialize)]
@@ -173,11 +178,15 @@ async fn get_painted_cells_in_bbox(
     State(state): State<ApiState>,
     Query(query): Query<PaintedCellsQuery>,
 ) -> Result<Json<PaintedCellsResponse>, ApiError> {
-    let bbox = validate_bbox(query)?;
+    let (bbox, limit) = validate_painted_cells_query(query)?;
     let connection = open_initialized_connection(&state)?;
-    let cells = db::get_cells_in_bbox(&connection, bbox).map_err(to_storage_error)?;
+    let page = db::get_cells_in_bbox_limited(&connection, bbox, limit).map_err(to_storage_error)?;
 
-    Ok(Json(PaintedCellsResponse { cells }))
+    Ok(Json(PaintedCellsResponse {
+        cells: page.cells,
+        limit,
+        truncated: page.truncated,
+    }))
 }
 
 fn open_initialized_connection(state: &ApiState) -> Result<Connection, ApiError> {
@@ -247,11 +256,12 @@ fn validate_cell_identity(h3_id: &str, resolution: i64) -> Result<(), ApiError> 
     Ok(())
 }
 
-fn validate_bbox(query: PaintedCellsQuery) -> Result<db::Bbox, ApiError> {
+fn validate_painted_cells_query(query: PaintedCellsQuery) -> Result<(db::Bbox, usize), ApiError> {
     validate_bbox_longitude(query.west, "west")?;
     validate_bbox_longitude(query.east, "east")?;
     validate_bbox_latitude(query.south, "south")?;
     validate_bbox_latitude(query.north, "north")?;
+    let limit = validate_painted_cells_query_limit(query.limit)?;
 
     if query.south > query.north {
         return Err(ApiError::InvalidBbox(
@@ -259,12 +269,26 @@ fn validate_bbox(query: PaintedCellsQuery) -> Result<db::Bbox, ApiError> {
         ));
     }
 
-    Ok(db::Bbox {
+    let bbox = db::Bbox {
         west: query.west,
         south: query.south,
         east: query.east,
         north: query.north,
-    })
+    };
+
+    Ok((bbox, limit))
+}
+
+fn validate_painted_cells_query_limit(limit: Option<usize>) -> Result<usize, ApiError> {
+    let limit = limit.unwrap_or(DEFAULT_PAINTED_CELLS_QUERY_LIMIT);
+
+    if limit == 0 || limit > MAX_PAINTED_CELLS_QUERY_LIMIT {
+        return Err(ApiError::InvalidBbox(format!(
+            "limit must be between 1 and {MAX_PAINTED_CELLS_QUERY_LIMIT}"
+        )));
+    }
+
+    Ok(limit)
 }
 
 fn validate_longitude(value: f64, field_name: &'static str) -> Result<(), ApiError> {

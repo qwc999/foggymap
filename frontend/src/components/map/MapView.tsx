@@ -528,6 +528,7 @@ export function MapView({
     <div
       ref={containerRef}
       className={cn("h-full w-full", className)}
+      data-painted-cell-count={paintedH3Ids.length}
       data-testid="map-view"
     />
   );

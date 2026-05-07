@@ -14,6 +14,12 @@ import type { MapMode } from "@/config/mapProviders";
 import { cn } from "@/lib/utils";
 import { chunkPaintCellInputs, createPaintCellInputs } from "@/paint/brush";
 import {
+  PAINTED_CELLS_VIEWPORT_DEBOUNCE_MS,
+  PAINTED_CELLS_VIEWPORT_QUERY_LIMIT,
+  createViewportPaintedH3Ids,
+  getPaintedCellsBboxSignature,
+} from "@/paint/viewport";
+import {
   areMapViewStatesEqual,
   DEFAULT_MAP_VIEW_STATE,
   getMapViewStateSignature,
@@ -25,7 +31,13 @@ import {
 
 type HealthState = "loading" | "ok" | "error";
 type MapPersistenceState = "loading" | "saved" | "saving" | "error";
-type PaintPersistenceState = "idle" | "loading" | "saved" | "saving" | "error";
+type PaintPersistenceState =
+  | "idle"
+  | "loading"
+  | "saved"
+  | "saving"
+  | "limited"
+  | "error";
 
 export function App() {
   const [health, setHealth] = useState<HealthState>("loading");
@@ -142,7 +154,12 @@ export function App() {
     };
   }, [mapPersistenceState, mapViewState]);
 
-  const addPaintedH3Ids = useCallback((h3Ids: readonly string[]) => {
+  const replaceVisiblePaintedH3Ids = useCallback((h3Ids: readonly string[]) => {
+    paintedH3IdSetRef.current = new Set(h3Ids);
+    setPaintedH3Ids([...paintedH3IdSetRef.current]);
+  }, []);
+
+  const addVisiblePaintedH3Ids = useCallback((h3Ids: readonly string[]) => {
     const nextH3Ids: string[] = [];
 
     for (const h3Id of h3Ids) {
@@ -211,15 +228,27 @@ export function App() {
     );
 
     const timeoutId = window.setTimeout(() => {
-      loadPaintedCellsInBbox(paintedCellsViewportBbox)
-        .then((cells) => {
+      loadPaintedCellsInBbox({
+        ...paintedCellsViewportBbox,
+        limit: PAINTED_CELLS_VIEWPORT_QUERY_LIMIT,
+      })
+        .then((result) => {
           if (viewportLoadSequenceRef.current !== loadSequence) {
             return;
           }
 
-          addPaintedH3Ids(cells.map((cell) => cell.h3_id));
+          replaceVisiblePaintedH3Ids(
+            createViewportPaintedH3Ids(
+              result.cells.map((cell) => cell.h3_id),
+              pendingPaintH3IdsRef.current,
+            ),
+          );
           setPaintPersistenceState((currentState) =>
-            currentState === "saving" ? currentState : "saved",
+            currentState === "saving"
+              ? currentState
+              : result.truncated
+                ? "limited"
+                : "saved",
           );
         })
         .catch(() => {
@@ -229,12 +258,12 @@ export function App() {
 
           setPaintPersistenceState("error");
         });
-    }, 250);
+    }, PAINTED_CELLS_VIEWPORT_DEBOUNCE_MS);
 
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [addPaintedH3Ids, paintedCellsViewportBbox]);
+  }, [paintedCellsViewportBbox, replaceVisiblePaintedH3Ids]);
 
   const handleMapViewStateChange = useCallback((nextMapViewState: MapViewState) => {
     setMapViewState((currentMapViewState) =>
@@ -254,7 +283,8 @@ export function App() {
 
   const handlePaintedCellsViewportChange = useCallback((bbox: PaintedCellsBbox) => {
     setPaintedCellsViewportBbox((currentBbox) =>
-      currentBbox && getBboxSignature(currentBbox) === getBboxSignature(bbox)
+      currentBbox &&
+      getPaintedCellsBboxSignature(currentBbox) === getPaintedCellsBboxSignature(bbox)
         ? currentBbox
         : bbox,
     );
@@ -262,13 +292,13 @@ export function App() {
 
   const handlePaintCells = useCallback(
     (h3Ids: string[]) => {
-      const newH3Ids = addPaintedH3Ids(h3Ids);
+      const newH3Ids = addVisiblePaintedH3Ids(h3Ids);
 
       for (const h3Id of newH3Ids) {
         pendingPaintH3IdsRef.current.add(h3Id);
       }
     },
-    [addPaintedH3Ids],
+    [addVisiblePaintedH3Ids],
   );
 
   return (
@@ -357,13 +387,11 @@ export function App() {
                 ? "saving"
                 : paintPersistenceState === "saved"
                   ? "saved"
-                  : "error"}
+                  : paintPersistenceState === "limited"
+                    ? "limited"
+                    : "error"}
         </span>
       </div>
     </main>
   );
-}
-
-function getBboxSignature({ west, south, east, north }: PaintedCellsBbox): string {
-  return [west, south, east, north].map((value) => value.toFixed(6)).join(":");
 }

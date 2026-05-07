@@ -361,3 +361,31 @@ Unit-тесты на brush/H3 helper logic. Rust persistence уже покрыт
 - Для restart behavior добавлена базовая загрузка painted cells из текущего viewport bbox; полноценная debounce/prune/max-limit логика остается в FOG-015.
 - Проверено через Docker: frontend typecheck, lint, format check, Vitest, build и npm audit.
 - E2E-проверка в локальном compose: headless Chrome включил brush, протянул stroke по карте, backend получил 12 новых H3 cells, эти cells остались после `docker compose restart backend`; runtime exceptions не было. Проверочные cells затем удалены через erase API, `map.view` восстановлен к прежнему значению.
+
+---
+
+## FOG-015 - Viewport-Подгрузка Закрашенных Ячеек
+
+**Status:** Done
+
+**Description:**
+Загружать painted cells для видимых bounds карты после pan/zoom и рендерить только эти ячейки.
+
+**Acceptance:**
+- При возвращении в ранее закрашенную область overlay подгружается заново.
+- При уходе из области frontend source не держит лишние ячейки.
+- Bbox-запросы debounced.
+- Временный max result limit защищает от гигантских payload.
+
+**Tests:**
+Проверить helpers построения bbox-запроса и frontend merge/replace logic, если они будут выделены.
+
+**Notes:**
+- Backend bbox API теперь принимает `limit`, по умолчанию ограничивает ответ 20k cells, не принимает `limit=0` и значения выше 50k, а также возвращает `truncated`.
+- SQLite bbox query получает `limit + 1`, чтобы определить truncation без отправки лишнего payload.
+- Frontend viewport-загрузка использует `limit=20000`, debounce 350ms и заменяет текущий overlay результатом нового bbox-запроса, вместо накопления всех когда-либо виденных cells.
+- Локально нарисованные, но еще не сохраненные H3 cells добавляются поверх результата viewport-загрузки, чтобы stroke не мигал при гонке с запросом.
+- Добавлен `frontend/src/paint/viewport.ts` с bbox signature, debounce/limit constants и helper для сборки viewport-scoped H3 ids.
+- `MapView` получил технический `data-painted-cell-count` для E2E-проверки размера текущего frontend overlay state.
+- Проверено через Docker: backend fmt, test, clippy; frontend typecheck, lint, format, Vitest, build и npm audit.
+- E2E-проверка в локальном compose: headless Chrome нарисовал 12 временных cells в viewport A, при загрузке viewport B frontend count стал 0, при возврате в viewport A count снова стал 12 и совпал с API; runtime exceptions не было. Проверочные cells удалены, `map.view` восстановлен.

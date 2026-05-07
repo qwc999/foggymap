@@ -16,8 +16,20 @@ export interface PaintedCellsBbox {
   north: number;
 }
 
+export interface PaintedCellsViewportQuery extends PaintedCellsBbox {
+  limit?: number;
+}
+
+export interface PaintedCellsLoadResult {
+  cells: PaintedCell[];
+  limit: number;
+  truncated: boolean;
+}
+
 interface PaintedCellsResponse {
   cells: PaintedCell[];
+  limit?: number;
+  truncated?: boolean;
 }
 
 interface BatchMutationResponse {
@@ -43,9 +55,9 @@ export class PaintedCellsApiError extends Error {
 }
 
 export async function loadPaintedCellsInBbox(
-  bbox: PaintedCellsBbox,
-): Promise<PaintedCell[]> {
-  const response = await fetch(paintedCellsUrl(bbox), {
+  query: PaintedCellsViewportQuery,
+): Promise<PaintedCellsLoadResult> {
+  const response = await fetch(buildPaintedCellsBboxUrl(query), {
     method: "GET",
     headers: {
       Accept: "application/json",
@@ -55,7 +67,11 @@ export async function loadPaintedCellsInBbox(
   await throwIfRequestFailed(response);
 
   const body = (await response.json()) as PaintedCellsResponse;
-  return body.cells;
+  return {
+    cells: body.cells,
+    limit: body.limit ?? query.limit ?? body.cells.length,
+    truncated: body.truncated ?? false,
+  };
 }
 
 export async function paintCells(
@@ -75,13 +91,17 @@ export async function paintCells(
   return (await response.json()) as BatchMutationResponse;
 }
 
-function paintedCellsUrl(bbox: PaintedCellsBbox): string {
+export function buildPaintedCellsBboxUrl(query: PaintedCellsViewportQuery): string {
   const searchParams = new URLSearchParams({
-    west: String(bbox.west),
-    south: String(bbox.south),
-    east: String(bbox.east),
-    north: String(bbox.north),
+    west: String(query.west),
+    south: String(query.south),
+    east: String(query.east),
+    north: String(query.north),
   });
+
+  if (query.limit !== undefined) {
+    searchParams.set("limit", String(query.limit));
+  }
 
   return `/api/painted-cells?${searchParams.toString()}`;
 }
