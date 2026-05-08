@@ -471,3 +471,30 @@ Rust-тесты на persistence home location. Frontend-тесты для state
 - Добавлены тесты `homeLocation.test.ts`, `homeLocation` API tests и Rust-тесты на insert/update/load/clear.
 - Проверено через Docker: backend fmt, test, clippy; frontend format, typecheck, Vitest, lint, build и npm audit.
 - E2E-проверка в локальном compose: headless Chrome сохранил home из центра, перешел домой из другого viewport, выбрал home кликом по карте; исходные `map.view` и `home_location` восстановлены.
+
+---
+
+## FOG-019 - Помощник Радиуса 10км Вокруг Дома
+
+**Status:** Done
+
+**Description:**
+Добавить helper, который показывает и при подтверждении закрашивает область вокруг home в радиусе 10км.
+
+**Acceptance:**
+- Радиус 10км можно показать на карте.
+- Перед bulk painting пользователь должен подтвердить действие.
+- Bulk painting батчится и не замораживает UI.
+
+**Tests:**
+Тесты на radius geometry и batch generation helpers.
+
+**Notes:**
+- Добавлен helper `frontend/src/paint/homeRadius.ts` для GeoJSON preview-круга и генерации H3 cells вокруг home.
+- Bulk-закраска 10км использует H3 `res 10`: проверка показала, что `res 11` дает около 123k cells, что слишком тяжело для стартовой bulk-операции.
+- `MapView` получил отдельный прозрачный слой home radius preview, который восстанавливается после смены style.
+- Toolbar получил кнопки `home-radius-preview` и `paint-home-radius`.
+- Перед bulk painting показывается confirmation panel; без подтверждения API-записи не выполняются.
+- Bulk painting отправляет cells в существующий paint API батчами до 10k и делает yield между batch-ами.
+- Проверено через Docker: frontend format, typecheck, Vitest, lint, build и npm audit.
+- E2E-проверка в локальном compose: headless Chrome включил preview, открыл confirmation, подтвердил bulk paint, backend получил 17 412 новых cells, frontend overlay count стал 17 412. Проверочные cells удалены, `map.view` и `home_location` восстановлены.

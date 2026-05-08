@@ -20,6 +20,11 @@ import {
   collectNewPaintedH3Ids,
   type BrushMode,
 } from "@/paint/brush";
+import {
+  createHomeRadiusCircleFeatureCollection,
+  HOME_RADIUS_METERS,
+  type RadiusCircleFeatureCollection,
+} from "@/paint/homeRadius";
 import { areMapViewStatesEqual, type MapViewState } from "@/state/mapViewState";
 
 const H3_PREVIEW_SOURCE_ID = "h3-preview";
@@ -28,6 +33,9 @@ const H3_PREVIEW_LINE_LAYER_ID = "h3-preview-line";
 const PAINTED_CELLS_SOURCE_ID = "painted-cells";
 const PAINTED_CELLS_FILL_LAYER_ID = "painted-cells-fill";
 const PAINTED_CELLS_LINE_LAYER_ID = "painted-cells-line";
+const HOME_RADIUS_SOURCE_ID = "home-radius";
+const HOME_RADIUS_FILL_LAYER_ID = "home-radius-fill";
+const HOME_RADIUS_LINE_LAYER_ID = "home-radius-line";
 
 const EMPTY_H3_PREVIEW_FEATURE_COLLECTION: H3CellFeatureCollection = {
   type: "FeatureCollection",
@@ -35,6 +43,11 @@ const EMPTY_H3_PREVIEW_FEATURE_COLLECTION: H3CellFeatureCollection = {
 };
 
 const EMPTY_PAINTED_CELLS_FEATURE_COLLECTION: H3CellFeatureCollection = {
+  type: "FeatureCollection",
+  features: [],
+};
+
+const EMPTY_HOME_RADIUS_FEATURE_COLLECTION: RadiusCircleFeatureCollection = {
   type: "FeatureCollection",
   features: [],
 };
@@ -51,6 +64,7 @@ interface MapViewProps {
   brushRadiusMeters?: number;
   homeLocation?: MapHomeLocation | null;
   homePickModeEnabled?: boolean;
+  homeRadiusPreviewEnabled?: boolean;
   paintedH3Ids?: readonly string[];
   onViewStateChange?: (viewState: MapViewState) => void;
   onViewportBoundsChange?: (bbox: PaintedCellsBbox) => void;
@@ -243,6 +257,91 @@ function setPaintedCellsData(
   return false;
 }
 
+function ensureHomeRadiusLayers(map: maplibregl.Map): boolean {
+  try {
+    if (!map.getStyle()) {
+      return false;
+    }
+
+    if (!map.getSource(HOME_RADIUS_SOURCE_ID)) {
+      map.addSource(HOME_RADIUS_SOURCE_ID, {
+        type: "geojson",
+        data: EMPTY_HOME_RADIUS_FEATURE_COLLECTION,
+      });
+    }
+
+    if (!map.getLayer(HOME_RADIUS_FILL_LAYER_ID)) {
+      map.addLayer({
+        id: HOME_RADIUS_FILL_LAYER_ID,
+        type: "fill",
+        source: HOME_RADIUS_SOURCE_ID,
+        paint: {
+          "fill-color": "#14b8a6",
+          "fill-opacity": 0.14,
+        },
+      });
+    }
+
+    if (!map.getLayer(HOME_RADIUS_LINE_LAYER_ID)) {
+      map.addLayer({
+        id: HOME_RADIUS_LINE_LAYER_ID,
+        type: "line",
+        source: HOME_RADIUS_SOURCE_ID,
+        paint: {
+          "line-color": "#5eead4",
+          "line-opacity": 0.9,
+          "line-width": 2,
+          "line-dasharray": [2, 2],
+        },
+      });
+    }
+  } catch {
+    return false;
+  }
+
+  return true;
+}
+
+function setHomeRadiusData(
+  map: maplibregl.Map,
+  featureCollection: RadiusCircleFeatureCollection,
+): boolean {
+  if (!ensureHomeRadiusLayers(map)) {
+    return false;
+  }
+
+  const source = map.getSource(HOME_RADIUS_SOURCE_ID) as GeoJSONSource | undefined;
+
+  if (source) {
+    source.setData(featureCollection);
+    return true;
+  }
+
+  return false;
+}
+
+function syncHomeRadiusData(
+  map: maplibregl.Map,
+  homeLocation: MapHomeLocation | null,
+  enabled: boolean,
+): void {
+  if (!homeLocation || !enabled) {
+    setHomeRadiusData(map, EMPTY_HOME_RADIUS_FEATURE_COLLECTION);
+    return;
+  }
+
+  setHomeRadiusData(
+    map,
+    createHomeRadiusCircleFeatureCollection(
+      {
+        lng: homeLocation.longitude,
+        lat: homeLocation.latitude,
+      },
+      HOME_RADIUS_METERS,
+    ),
+  );
+}
+
 function createH3PreviewFeatureCollection(h3Id: string): H3CellFeatureCollection {
   return {
     type: "FeatureCollection",
@@ -325,6 +424,7 @@ export function MapView({
   brushRadiusMeters = DEFAULT_BRUSH_RADIUS_METERS,
   homeLocation = null,
   homePickModeEnabled = false,
+  homeRadiusPreviewEnabled = false,
   paintedH3Ids = [],
   onViewStateChange,
   onViewportBoundsChange,
@@ -349,6 +449,7 @@ export function MapView({
   const brushModeRef = useRef<BrushMode | null>(brushMode);
   const homePickModeEnabledRef = useRef(homePickModeEnabled);
   const homeLocationRef = useRef<MapHomeLocation | null>(homeLocation);
+  const homeRadiusPreviewEnabledRef = useRef(homeRadiusPreviewEnabled);
   const brushRadiusMetersRef = useRef(brushRadiusMeters);
   const paintedH3IdSetRef = useRef<Set<string>>(new Set(paintedH3Ids));
   const isPaintingRef = useRef(false);
@@ -401,8 +502,19 @@ export function MapView({
 
     if (map) {
       syncHomeMarker(map, homeMarkerRef, homeLocation);
+      syncHomeRadiusData(map, homeLocation, homeRadiusPreviewEnabledRef.current);
     }
   }, [homeLocation]);
+
+  useEffect(() => {
+    homeRadiusPreviewEnabledRef.current = homeRadiusPreviewEnabled;
+
+    const map = mapRef.current;
+
+    if (map) {
+      syncHomeRadiusData(map, homeLocationRef.current, homeRadiusPreviewEnabled);
+    }
+  }, [homeRadiusPreviewEnabled]);
 
   useEffect(() => {
     brushModeRef.current = brushMode;
@@ -473,6 +585,11 @@ export function MapView({
     const handleStyleData = () => {
       syncPaintedCellsData();
       applyH3PreviewStyle(map, brushModeRef.current);
+      syncHomeRadiusData(
+        map,
+        homeLocationRef.current,
+        homeRadiusPreviewEnabledRef.current,
+      );
 
       if (currentPreviewH3CellRef.current) {
         setH3PreviewData(
@@ -637,6 +754,11 @@ export function MapView({
 
     mapRef.current = map;
     syncHomeMarker(map, homeMarkerRef, homeLocationRef.current);
+    syncHomeRadiusData(
+      map,
+      homeLocationRef.current,
+      homeRadiusPreviewEnabledRef.current,
+    );
 
     return () => {
       stopBrushStroke();
