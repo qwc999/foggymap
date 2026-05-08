@@ -444,3 +444,30 @@ Component tests для состояния toolbar, если это будет п
 - Добавлены тесты `AppToolbar.test.tsx` и `brushSettings.test.ts`.
 - Проверено через Docker: frontend format, typecheck, Vitest, lint, build и npm audit.
 - E2E-проверка в локальном compose: headless Chrome проверил отображение toolbar, переключение map/paint/erase, disabled Home, отсутствие overlap с attribution/navigation и сохранение brush radius `75` после reload. Проверочные значения `map.view` и `brush.radiusMeters` восстановлены.
+
+---
+
+## FOG-018 - Home Location
+
+**Status:** Done
+
+**Description:**
+Дать пользователю возможность задать, сохранить и быстро открыть домашнюю точку.
+
+**Acceptance:**
+- Пользователь может установить home из текущего центра карты или кликом по карте.
+- Home сохраняется после restart.
+- Кнопка home в toolbar центрирует карту на сохраненной точке.
+
+**Tests:**
+Rust-тесты на persistence home location. Frontend-тесты для state helpers, если практично.
+
+**Notes:**
+- Добавлен backend API `GET/PUT/DELETE /home-location` поверх таблицы `home_location`.
+- Home можно сохранить из текущего центра карты, выбрать кликом по карте и открыть кнопкой Home.
+- Toolbar получил отдельные controls `home-button`, `set-home-center`, `pick-home-on-map`.
+- `MapView` рисует home marker и поддерживает режим выбора home кликом без remount карты.
+- Frontend state helpers из `frontend/src/state/homeLocation.ts` нормализуют сохраненную точку и строят следующий `MapViewState`.
+- Добавлены тесты `homeLocation.test.ts`, `homeLocation` API tests и Rust-тесты на insert/update/load/clear.
+- Проверено через Docker: backend fmt, test, clippy; frontend format, typecheck, Vitest, lint, build и npm audit.
+- E2E-проверка в локальном compose: headless Chrome сохранил home из центра, перешел домой из другого viewport, выбрал home кликом по карте; исходные `map.view` и `home_location` восстановлены.

@@ -1,5 +1,14 @@
 import type { ChangeEvent } from "react";
-import { Brush, Eraser, Home, MapPinned, Ruler, Satellite } from "lucide-react";
+import {
+  Brush,
+  Eraser,
+  Home,
+  MapPinPlus,
+  MapPinned,
+  MousePointerClick,
+  Ruler,
+  Satellite,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { MAX_BRUSH_RADIUS_METERS, MIN_BRUSH_RADIUS_METERS } from "@/config/h3";
@@ -12,9 +21,14 @@ interface AppToolbarProps {
   mapMode: MapMode;
   brushMode: BrushMode | null;
   brushRadiusMeters: number;
+  hasHomeLocation: boolean;
+  homePickModeEnabled: boolean;
   onMapModeChange: (mode: MapMode) => void;
   onBrushModeChange: (mode: BrushMode | null) => void;
   onBrushRadiusChange: (radiusMeters: number) => void;
+  onGoHome: () => void;
+  onSetHomeFromCenter: () => void;
+  onToggleHomePickMode: () => void;
 }
 
 const iconButtonClassName = "h-9 w-9 rounded-md";
@@ -25,9 +39,14 @@ export function AppToolbar({
   mapMode,
   brushMode,
   brushRadiusMeters,
+  hasHomeLocation,
+  homePickModeEnabled,
   onMapModeChange,
   onBrushModeChange,
   onBrushRadiusChange,
+  onGoHome,
+  onSetHomeFromCenter,
+  onToggleHomePickMode,
 }: AppToolbarProps) {
   const handleBrushRadiusChange = (event: ChangeEvent<HTMLInputElement>) => {
     onBrushRadiusChange(Number(event.currentTarget.value));
@@ -90,16 +109,43 @@ export function AppToolbar({
         >
           <Eraser className="h-4 w-4" />
         </Button>
+      </div>
+
+      <div aria-label="Home tools" className={groupClassName} role="group">
         <Button
-          aria-label="Home"
-          className={cn(iconButtonClassName, "opacity-60")}
-          data-testid="home-placeholder"
-          disabled
+          aria-label="Go home"
+          className={cn(iconButtonClassName, !hasHomeLocation && "opacity-60")}
+          data-testid="home-button"
+          disabled={!hasHomeLocation}
           size="icon"
           title="Home"
           variant="secondary"
+          onClick={onGoHome}
         >
           <Home className="h-4 w-4" />
+        </Button>
+        <Button
+          aria-label="Set home from center"
+          className={iconButtonClassName}
+          data-testid="set-home-center"
+          size="icon"
+          title="Set home from center"
+          variant="secondary"
+          onClick={onSetHomeFromCenter}
+        >
+          <MapPinPlus className="h-4 w-4" />
+        </Button>
+        <Button
+          aria-label="Pick home on map"
+          aria-pressed={homePickModeEnabled}
+          className={iconButtonClassName}
+          data-testid="pick-home-on-map"
+          size="icon"
+          title="Pick home on map"
+          variant={homePickModeEnabled ? "default" : "secondary"}
+          onClick={onToggleHomePickMode}
+        >
+          <MousePointerClick className="h-4 w-4" />
         </Button>
       </div>
 

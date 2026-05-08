@@ -7,6 +7,7 @@ import {
   paintCells,
   type PaintedCellsBbox,
 } from "@/api/paintedCells";
+import { loadHomeLocation, saveHomeLocation } from "@/api/homeLocation";
 import { MapView } from "@/components/map/MapView";
 import { AppToolbar } from "@/components/toolbar/AppToolbar";
 import type { MapMode } from "@/config/mapProviders";
@@ -40,10 +41,18 @@ import {
   sanitizeBrushRadiusMeters,
   serializeBrushRadiusMeters,
 } from "@/state/brushSettings";
+import {
+  createHomeLocationInputFromLngLat,
+  createHomeLocationInputFromMapViewState,
+  createMapViewStateForHomeLocation,
+  normalizeHomeLocation,
+  type HomeLocationState,
+} from "@/state/homeLocation";
 
 type HealthState = "loading" | "ok" | "error";
 type MapPersistenceState = "loading" | "saved" | "saving" | "error";
 type BrushPersistenceState = "loading" | "saved" | "saving" | "error";
+type HomePersistenceState = "loading" | "saved" | "saving" | "error";
 type PaintPersistenceState =
   | "idle"
   | "loading"
@@ -64,6 +73,10 @@ export function App() {
   );
   const [brushPersistenceState, setBrushPersistenceState] =
     useState<BrushPersistenceState>("loading");
+  const [homeLocation, setHomeLocation] = useState<HomeLocationState | null>(null);
+  const [homePickModeEnabled, setHomePickModeEnabled] = useState(false);
+  const [homePersistenceState, setHomePersistenceState] =
+    useState<HomePersistenceState>("loading");
   const [paintedH3Ids, setPaintedH3Ids] = useState<string[]>([]);
   const [paintedCellsViewportBbox, setPaintedCellsViewportBbox] =
     useState<PaintedCellsBbox | null>(null);
@@ -73,6 +86,7 @@ export function App() {
   const lastPersistedBrushRadiusRef = useRef<number | null>(null);
   const saveSequenceRef = useRef(0);
   const brushSaveSequenceRef = useRef(0);
+  const homeSaveSequenceRef = useRef(0);
   const paintedH3IdSetRef = useRef<Set<string>>(new Set());
   const pendingPaintH3IdsRef = useRef<Set<string>>(new Set());
   const pendingEraseH3IdsRef = useRef<Set<string>>(new Set());
@@ -251,6 +265,31 @@ export function App() {
     };
   }, [brushPersistenceState, brushRadiusMeters]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    loadHomeLocation()
+      .then((storedHomeLocation) => {
+        if (cancelled) {
+          return;
+        }
+
+        setHomeLocation(normalizeHomeLocation(storedHomeLocation));
+        setHomePersistenceState("saved");
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+
+        setHomePersistenceState("error");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const replaceVisiblePaintedH3Ids = useCallback((h3Ids: readonly string[]) => {
     paintedH3IdSetRef.current = new Set(h3Ids);
     setPaintedH3Ids([...paintedH3IdSetRef.current]);
@@ -411,8 +450,70 @@ export function App() {
     );
   }, []);
 
+  const handleBrushModeChange = useCallback((mode: BrushMode | null) => {
+    setBrushMode(mode);
+
+    if (mode) {
+      setHomePickModeEnabled(false);
+    }
+  }, []);
+
   const handleBrushRadiusChange = useCallback((radiusMeters: number) => {
     setBrushRadiusMeters(sanitizeBrushRadiusMeters(radiusMeters));
+  }, []);
+
+  const persistHomeLocation = useCallback(
+    (homeLocationInput: Parameters<typeof saveHomeLocation>[0]) => {
+      const saveSequence = homeSaveSequenceRef.current + 1;
+      homeSaveSequenceRef.current = saveSequence;
+      setHomePersistenceState("saving");
+
+      void saveHomeLocation(homeLocationInput)
+        .then((savedHomeLocation) => {
+          if (homeSaveSequenceRef.current !== saveSequence) {
+            return;
+          }
+
+          setHomeLocation(normalizeHomeLocation(savedHomeLocation));
+          setHomePickModeEnabled(false);
+          setHomePersistenceState("saved");
+        })
+        .catch(() => {
+          if (homeSaveSequenceRef.current !== saveSequence) {
+            return;
+          }
+
+          setHomePersistenceState("error");
+        });
+    },
+    [],
+  );
+
+  const handleSetHomeFromCenter = useCallback(() => {
+    persistHomeLocation(createHomeLocationInputFromMapViewState(mapViewState));
+  }, [mapViewState, persistHomeLocation]);
+
+  const handlePickHomeLocation = useCallback(
+    (lngLat: { lng: number; lat: number }) => {
+      persistHomeLocation(createHomeLocationInputFromLngLat(lngLat, mapViewState.zoom));
+    },
+    [mapViewState.zoom, persistHomeLocation],
+  );
+
+  const handleGoHome = useCallback(() => {
+    if (!homeLocation) {
+      return;
+    }
+
+    setHomePickModeEnabled(false);
+    setMapViewState((currentMapViewState) =>
+      createMapViewStateForHomeLocation(currentMapViewState, homeLocation),
+    );
+  }, [homeLocation]);
+
+  const handleToggleHomePickMode = useCallback(() => {
+    setBrushMode(null);
+    setHomePickModeEnabled((currentValue) => !currentValue);
   }, []);
 
   const handlePaintedCellsViewportChange = useCallback((bbox: PaintedCellsBbox) => {
@@ -457,21 +558,29 @@ export function App() {
         viewState={mapViewState}
         brushMode={brushMode}
         brushRadiusMeters={brushRadiusMeters}
+        homeLocation={homeLocation}
+        homePickModeEnabled={homePickModeEnabled}
         paintedH3Ids={paintedH3Ids}
         onViewStateChange={handleMapViewStateChange}
         onViewportBoundsChange={handlePaintedCellsViewportChange}
         onPaintCells={handlePaintCells}
         onEraseCells={handleEraseCells}
         onBrushStrokeEnd={flushPendingPaintMutations}
+        onPickHomeLocation={handlePickHomeLocation}
       />
 
       <AppToolbar
         brushMode={brushMode}
         brushRadiusMeters={brushRadiusMeters}
+        hasHomeLocation={Boolean(homeLocation)}
+        homePickModeEnabled={homePickModeEnabled}
         mapMode={mapViewState.mode}
-        onBrushModeChange={setBrushMode}
+        onBrushModeChange={handleBrushModeChange}
         onBrushRadiusChange={handleBrushRadiusChange}
+        onGoHome={handleGoHome}
         onMapModeChange={handleMapModeChange}
+        onSetHomeFromCenter={handleSetHomeFromCenter}
+        onToggleHomePickMode={handleToggleHomePickMode}
       />
 
       <div className="absolute bottom-4 left-4 z-10 flex items-center gap-3 rounded-lg border border-border bg-background/72 px-4 py-3 text-sm text-slate-200 shadow-2xl backdrop-blur">
@@ -510,6 +619,19 @@ export function App() {
               ? "saving"
               : brushPersistenceState === "saved"
                 ? "saved"
+                : "error"}
+        </span>
+        <span className="text-slate-500">/</span>
+        <span>
+          Home:{" "}
+          {homePersistenceState === "loading"
+            ? "loading"
+            : homePersistenceState === "saving"
+              ? "saving"
+              : homePersistenceState === "saved"
+                ? homeLocation
+                  ? "saved"
+                  : "not set"
                 : "error"}
         </span>
         <span className="text-slate-500">/</span>

@@ -18,6 +18,8 @@ const MAX_PAINTED_CELLS_BATCH_LEN: usize = 10_000;
 const DEFAULT_PAINTED_CELLS_QUERY_LIMIT: usize = 20_000;
 const MAX_PAINTED_CELLS_QUERY_LIMIT: usize = 50_000;
 const MAX_H3_ID_LEN: usize = 32;
+const MIN_HOME_ZOOM: f64 = 0.0;
+const MAX_HOME_ZOOM: f64 = 24.0;
 
 #[derive(Clone)]
 struct ApiState {
@@ -39,6 +41,11 @@ struct SaveAppStateRequest {
 struct AppStateResponse {
     key: String,
     value: Option<Value>,
+}
+
+#[derive(Serialize)]
+struct HomeLocationResponse {
+    home_location: Option<db::HomeLocation>,
 }
 
 #[derive(Serialize)]
@@ -82,6 +89,7 @@ struct BatchMutationResponse {
 enum ApiError {
     InvalidAppStateKey(db::AppStateKeyError),
     InvalidJson(JsonRejection),
+    InvalidHomeLocationInput(String),
     InvalidPaintedCellsInput(String),
     InvalidBbox(String),
     Storage(db::StorageError),
@@ -138,6 +146,42 @@ async fn save_app_state(
             value: Some(payload.value),
         }),
     ))
+}
+
+async fn load_home_location(
+    State(state): State<ApiState>,
+) -> Result<Json<HomeLocationResponse>, ApiError> {
+    let connection = open_initialized_connection(&state)?;
+    let home_location = db::load_home_location(&connection).map_err(to_storage_error)?;
+
+    Ok(Json(HomeLocationResponse { home_location }))
+}
+
+async fn save_home_location(
+    State(state): State<ApiState>,
+    payload: Result<Json<db::HomeLocationInput>, JsonRejection>,
+) -> Result<Json<HomeLocationResponse>, ApiError> {
+    let Json(payload) = payload.map_err(ApiError::InvalidJson)?;
+
+    validate_home_location_input(&payload)?;
+
+    let connection = open_initialized_connection(&state)?;
+    let home_location = db::save_home_location(&connection, &payload).map_err(to_storage_error)?;
+
+    Ok(Json(HomeLocationResponse {
+        home_location: Some(home_location),
+    }))
+}
+
+async fn clear_home_location(
+    State(state): State<ApiState>,
+) -> Result<Json<HomeLocationResponse>, ApiError> {
+    let connection = open_initialized_connection(&state)?;
+    db::clear_home_location(&connection).map_err(to_storage_error)?;
+
+    Ok(Json(HomeLocationResponse {
+        home_location: None,
+    }))
 }
 
 async fn paint_cells(
@@ -222,6 +266,21 @@ fn validate_cell_refs_request(cells: &[db::CellRef]) -> Result<(), ApiError> {
     Ok(())
 }
 
+fn validate_home_location_input(home_location: &db::HomeLocationInput) -> Result<(), ApiError> {
+    validate_home_longitude(home_location.longitude, "longitude")?;
+    validate_home_latitude(home_location.latitude, "latitude")?;
+
+    if let Some(zoom) = home_location.zoom {
+        if !zoom.is_finite() || !(MIN_HOME_ZOOM..=MAX_HOME_ZOOM).contains(&zoom) {
+            return Err(ApiError::InvalidHomeLocationInput(format!(
+                "zoom must be a finite value between {MIN_HOME_ZOOM} and {MAX_HOME_ZOOM}"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 fn validate_batch_len(len: usize) -> Result<(), ApiError> {
     if len > MAX_PAINTED_CELLS_BATCH_LEN {
         return Err(ApiError::InvalidPaintedCellsInput(format!(
@@ -291,6 +350,26 @@ fn validate_painted_cells_query_limit(limit: Option<usize>) -> Result<usize, Api
     Ok(limit)
 }
 
+fn validate_home_longitude(value: f64, field_name: &'static str) -> Result<(), ApiError> {
+    if !value.is_finite() || !(-180.0..=180.0).contains(&value) {
+        return Err(ApiError::InvalidHomeLocationInput(format!(
+            "{field_name} must be a finite longitude between -180 and 180"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_home_latitude(value: f64, field_name: &'static str) -> Result<(), ApiError> {
+    if !value.is_finite() || !(-90.0..=90.0).contains(&value) {
+        return Err(ApiError::InvalidHomeLocationInput(format!(
+            "{field_name} must be a finite latitude between -90 and 90"
+        )));
+    }
+
+    Ok(())
+}
+
 fn validate_longitude(value: f64, field_name: &'static str) -> Result<(), ApiError> {
     if !value.is_finite() || !(-180.0..=180.0).contains(&value) {
         return Err(ApiError::InvalidPaintedCellsInput(format!(
@@ -340,6 +419,11 @@ impl IntoResponse for ApiError {
                 error.to_string(),
             ),
             Self::InvalidJson(error) => (error.status(), "invalid_json", error.body_text()),
+            Self::InvalidHomeLocationInput(message) => (
+                StatusCode::BAD_REQUEST,
+                "invalid_home_location_input",
+                message,
+            ),
             Self::InvalidPaintedCellsInput(message) => (
                 StatusCode::BAD_REQUEST,
                 "invalid_painted_cells_input",
@@ -383,6 +467,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/app-state/{key}", get(load_app_state).put(save_app_state))
+        .route(
+            "/home-location",
+            get(load_home_location)
+                .put(save_home_location)
+                .delete(clear_home_location),
+        )
         .route("/painted-cells", get(get_painted_cells_in_bbox))
         .route("/painted-cells/paint", post(paint_cells))
         .route("/painted-cells/erase", post(erase_cells))

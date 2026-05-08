@@ -9,10 +9,15 @@ describe("AppToolbar", () => {
       <AppToolbar
         brushMode="paint"
         brushRadiusMeters={45}
+        hasHomeLocation
+        homePickModeEnabled={false}
         mapMode="satellite"
         onBrushModeChange={vi.fn()}
         onBrushRadiusChange={vi.fn()}
+        onGoHome={vi.fn()}
         onMapModeChange={vi.fn()}
+        onSetHomeFromCenter={vi.fn()}
+        onToggleHomePickMode={vi.fn()}
       />,
     );
 
@@ -21,24 +26,53 @@ describe("AppToolbar", () => {
     expect(html).toContain('aria-pressed="true"');
     expect(html).toContain('data-testid="paint-mode"');
     expect(html).toContain('data-testid="erase-mode"');
+    expect(html).toContain('data-testid="home-button"');
+    expect(html).toContain('data-testid="set-home-center"');
+    expect(html).toContain('data-testid="pick-home-on-map"');
     expect(html).toContain('data-testid="brush-size-range"');
     expect(html).toContain('data-testid="brush-size-input"');
     expect(html).toContain('value="45"');
   });
 
-  it("keeps the home button disabled until home location is implemented", () => {
+  it("disables the home button until a home location exists", () => {
     const html = renderToStaticMarkup(
       <AppToolbar
         brushMode={null}
         brushRadiusMeters={30}
+        hasHomeLocation={false}
+        homePickModeEnabled={false}
         mapMode="street"
         onBrushModeChange={vi.fn()}
         onBrushRadiusChange={vi.fn()}
+        onGoHome={vi.fn()}
         onMapModeChange={vi.fn()}
+        onSetHomeFromCenter={vi.fn()}
+        onToggleHomePickMode={vi.fn()}
       />,
     );
 
-    expect(html).toContain('data-testid="home-placeholder"');
+    expect(html).toContain('data-testid="home-button"');
     expect(html).toContain("disabled");
+  });
+
+  it("marks map picking as active when requested", () => {
+    const html = renderToStaticMarkup(
+      <AppToolbar
+        brushMode={null}
+        brushRadiusMeters={30}
+        hasHomeLocation
+        homePickModeEnabled
+        mapMode="street"
+        onBrushModeChange={vi.fn()}
+        onBrushRadiusChange={vi.fn()}
+        onGoHome={vi.fn()}
+        onMapModeChange={vi.fn()}
+        onSetHomeFromCenter={vi.fn()}
+        onToggleHomePickMode={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain('data-testid="pick-home-on-map"');
+    expect(html).toContain('aria-pressed="true"');
   });
 });

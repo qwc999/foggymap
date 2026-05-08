@@ -83,6 +83,21 @@ pub struct CellRef {
     pub resolution: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HomeLocationInput {
+    pub longitude: f64,
+    pub latitude: f64,
+    pub zoom: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HomeLocation {
+    pub longitude: f64,
+    pub latitude: f64,
+    pub zoom: Option<f64>,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Bbox {
     pub west: f64,
@@ -283,6 +298,49 @@ pub fn save_app_state_value(
     Ok(())
 }
 
+pub fn load_home_location(connection: &Connection) -> rusqlite::Result<Option<HomeLocation>> {
+    connection
+        .query_row(
+            r#"
+            SELECT longitude, latitude, zoom, updated_at
+            FROM home_location
+            WHERE id = 1
+            "#,
+            [],
+            read_home_location,
+        )
+        .optional()
+}
+
+pub fn save_home_location(
+    connection: &Connection,
+    home_location: &HomeLocationInput,
+) -> rusqlite::Result<HomeLocation> {
+    connection.execute(
+        r#"
+        INSERT INTO home_location (id, longitude, latitude, zoom)
+        VALUES (1, ?1, ?2, ?3)
+        ON CONFLICT(id) DO UPDATE SET
+            longitude = excluded.longitude,
+            latitude = excluded.latitude,
+            zoom = excluded.zoom,
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        "#,
+        params![
+            home_location.longitude,
+            home_location.latitude,
+            home_location.zoom
+        ],
+    )?;
+
+    load_home_location(connection)
+        .map(|home_location| home_location.expect("home location exists immediately after upsert"))
+}
+
+pub fn clear_home_location(connection: &Connection) -> rusqlite::Result<usize> {
+    connection.execute("DELETE FROM home_location WHERE id = 1", [])
+}
+
 pub fn paint_cells(
     connection: &mut Connection,
     cells: &[PaintCellInput],
@@ -397,6 +455,15 @@ fn query_cells_in_bbox(
     Ok(BboxCellsPage { cells, truncated })
 }
 
+fn read_home_location(row: &rusqlite::Row<'_>) -> rusqlite::Result<HomeLocation> {
+    Ok(HomeLocation {
+        longitude: row.get(0)?,
+        latitude: row.get(1)?,
+        zoom: row.get(2)?,
+        updated_at: row.get(3)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -408,9 +475,10 @@ mod tests {
     use rusqlite::{params, Connection};
 
     use super::{
-        erase_cells, get_cells_in_bbox_limited, initialize_connection, initialize_database,
-        load_app_state_value, paint_cells, save_app_state_value, validate_app_state_key,
-        AppStateKeyError, Bbox, CellRef, PaintCellInput,
+        clear_home_location, erase_cells, get_cells_in_bbox_limited, initialize_connection,
+        initialize_database, load_app_state_value, load_home_location, paint_cells,
+        save_app_state_value, save_home_location, validate_app_state_key, AppStateKeyError, Bbox,
+        CellRef, HomeLocationInput, PaintCellInput,
     };
 
     #[test]
@@ -581,6 +649,70 @@ mod tests {
             validate_app_state_key(&"a".repeat(65)),
             Err(AppStateKeyError::TooLong { max_len: 64 })
         ));
+    }
+
+    #[test]
+    fn home_location_load_returns_none_when_missing() {
+        let connection = initialized_in_memory_connection();
+
+        let home_location = load_home_location(&connection).expect("load missing home location");
+
+        assert_eq!(home_location, None);
+    }
+
+    #[test]
+    fn home_location_save_inserts_and_updates_single_row() {
+        let connection = initialized_in_memory_connection();
+
+        let first_home_location = save_home_location(
+            &connection,
+            &HomeLocationInput {
+                longitude: 37.6173,
+                latitude: 55.7558,
+                zoom: Some(14.5),
+            },
+        )
+        .expect("save first home location");
+        let second_home_location = save_home_location(
+            &connection,
+            &HomeLocationInput {
+                longitude: -73.9857,
+                latitude: 40.7484,
+                zoom: None,
+            },
+        )
+        .expect("save second home location");
+        let row_count = count_table_rows(&connection, "home_location");
+
+        assert_eq!(first_home_location.longitude, 37.6173);
+        assert_eq!(first_home_location.latitude, 55.7558);
+        assert_eq!(first_home_location.zoom, Some(14.5));
+        assert_eq!(second_home_location.longitude, -73.9857);
+        assert_eq!(second_home_location.latitude, 40.7484);
+        assert_eq!(second_home_location.zoom, None);
+        assert!(!second_home_location.updated_at.is_empty());
+        assert_eq!(row_count, 1);
+    }
+
+    #[test]
+    fn home_location_clear_deletes_existing_row() {
+        let connection = initialized_in_memory_connection();
+
+        save_home_location(
+            &connection,
+            &HomeLocationInput {
+                longitude: 37.6173,
+                latitude: 55.7558,
+                zoom: Some(14.5),
+            },
+        )
+        .expect("save home location");
+
+        let changed = clear_home_location(&connection).expect("clear home location");
+        let home_location = load_home_location(&connection).expect("load home location");
+
+        assert_eq!(changed, 1);
+        assert_eq!(home_location, None);
     }
 
     #[test]

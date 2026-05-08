@@ -12,6 +12,7 @@ import {
   h3CellsToGeoJsonFeatureCollection,
   lngLatToH3Cell,
   type H3CellFeatureCollection,
+  type LngLat,
 } from "@/geo/h3Helpers";
 import { cn } from "@/lib/utils";
 import {
@@ -38,17 +39,25 @@ const EMPTY_PAINTED_CELLS_FEATURE_COLLECTION: H3CellFeatureCollection = {
   features: [],
 };
 
+export interface MapHomeLocation {
+  longitude: number;
+  latitude: number;
+}
+
 interface MapViewProps {
   className?: string;
   viewState: MapViewState;
   brushMode?: BrushMode | null;
   brushRadiusMeters?: number;
+  homeLocation?: MapHomeLocation | null;
+  homePickModeEnabled?: boolean;
   paintedH3Ids?: readonly string[];
   onViewStateChange?: (viewState: MapViewState) => void;
   onViewportBoundsChange?: (bbox: PaintedCellsBbox) => void;
   onPaintCells?: (h3Ids: string[]) => void;
   onEraseCells?: (h3Ids: string[]) => void;
   onBrushStrokeEnd?: () => void;
+  onPickHomeLocation?: (lngLat: LngLat) => void;
 }
 
 function createRasterStyle(mode: MapMode): StyleSpecification {
@@ -247,6 +256,43 @@ function createPaintedCellsFeatureCollection(
   return h3CellsToGeoJsonFeatureCollection([...h3Ids]);
 }
 
+function createHomeMarkerElement(): HTMLDivElement {
+  const markerElement = document.createElement("div");
+  markerElement.dataset.testid = "home-marker";
+  markerElement.style.width = "18px";
+  markerElement.style.height = "18px";
+  markerElement.style.borderRadius = "9999px";
+  markerElement.style.border = "3px solid white";
+  markerElement.style.background = "#14b8a6";
+  markerElement.style.boxShadow =
+    "0 0 0 4px rgba(20, 184, 166, 0.28), 0 10px 25px rgba(15, 23, 42, 0.45)";
+
+  return markerElement;
+}
+
+function syncHomeMarker(
+  map: maplibregl.Map,
+  markerRef: { current: maplibregl.Marker | null },
+  homeLocation: MapHomeLocation | null,
+): void {
+  if (!homeLocation) {
+    markerRef.current?.remove();
+    markerRef.current = null;
+    return;
+  }
+
+  if (!markerRef.current) {
+    markerRef.current = new maplibregl.Marker({
+      element: createHomeMarkerElement(),
+      anchor: "center",
+    });
+  }
+
+  markerRef.current
+    .setLngLat([homeLocation.longitude, homeLocation.latitude])
+    .addTo(map);
+}
+
 function readMapViewStateFromMap(map: maplibregl.Map, mode: MapMode): MapViewState {
   const center = map.getCenter();
 
@@ -277,25 +323,32 @@ export function MapView({
   viewState,
   brushMode = null,
   brushRadiusMeters = DEFAULT_BRUSH_RADIUS_METERS,
+  homeLocation = null,
+  homePickModeEnabled = false,
   paintedH3Ids = [],
   onViewStateChange,
   onViewportBoundsChange,
   onPaintCells,
   onEraseCells,
   onBrushStrokeEnd,
+  onPickHomeLocation,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const homeMarkerRef = useRef<maplibregl.Marker | null>(null);
   const initialViewStateRef = useRef(viewState);
   const onViewStateChangeRef = useRef(onViewStateChange);
   const onViewportBoundsChangeRef = useRef(onViewportBoundsChange);
   const onPaintCellsRef = useRef(onPaintCells);
   const onEraseCellsRef = useRef(onEraseCells);
   const onBrushStrokeEndRef = useRef(onBrushStrokeEnd);
+  const onPickHomeLocationRef = useRef(onPickHomeLocation);
   const appliedModeRef = useRef(viewState.mode);
   const isApplyingExternalStateRef = useRef(false);
   const currentPreviewH3CellRef = useRef<string | null>(null);
   const brushModeRef = useRef<BrushMode | null>(brushMode);
+  const homePickModeEnabledRef = useRef(homePickModeEnabled);
+  const homeLocationRef = useRef<MapHomeLocation | null>(homeLocation);
   const brushRadiusMetersRef = useRef(brushRadiusMeters);
   const paintedH3IdSetRef = useRef<Set<string>>(new Set(paintedH3Ids));
   const isPaintingRef = useRef(false);
@@ -321,6 +374,10 @@ export function MapView({
   }, [onBrushStrokeEnd]);
 
   useEffect(() => {
+    onPickHomeLocationRef.current = onPickHomeLocation;
+  }, [onPickHomeLocation]);
+
+  useEffect(() => {
     brushRadiusMetersRef.current = brushRadiusMeters;
   }, [brushRadiusMeters]);
 
@@ -338,6 +395,16 @@ export function MapView({
   }, [paintedH3Ids]);
 
   useEffect(() => {
+    homeLocationRef.current = homeLocation;
+
+    const map = mapRef.current;
+
+    if (map) {
+      syncHomeMarker(map, homeMarkerRef, homeLocation);
+    }
+  }, [homeLocation]);
+
+  useEffect(() => {
     brushModeRef.current = brushMode;
 
     const map = mapRef.current;
@@ -346,7 +413,10 @@ export function MapView({
       return;
     }
 
-    map.getCanvas().style.cursor = getBrushCursor(brushMode);
+    map.getCanvas().style.cursor = getMapCursor(
+      brushMode,
+      homePickModeEnabledRef.current,
+    );
     applyH3PreviewStyle(map, brushMode);
 
     if (!brushMode && isPaintingRef.current) {
@@ -355,6 +425,21 @@ export function MapView({
       onBrushStrokeEndRef.current?.();
     }
   }, [brushMode]);
+
+  useEffect(() => {
+    homePickModeEnabledRef.current = homePickModeEnabled;
+
+    const map = mapRef.current;
+
+    if (!map) {
+      return;
+    }
+
+    map.getCanvas().style.cursor = getMapCursor(
+      brushModeRef.current,
+      homePickModeEnabled,
+    );
+  }, [homePickModeEnabled]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) {
@@ -488,6 +573,18 @@ export function MapView({
       applyBrushAtLngLat(event.lngLat);
     };
 
+    const handleMapClick = (event: maplibregl.MapMouseEvent) => {
+      if (!homePickModeEnabledRef.current || brushModeRef.current) {
+        return;
+      }
+
+      event.preventDefault();
+      onPickHomeLocationRef.current?.({
+        lng: wrapLongitude(event.lngLat.lng),
+        lat: clampLatitude(event.lngLat.lat),
+      });
+    };
+
     const handleMouseMove = (event: maplibregl.MapMouseEvent) => {
       const h3Id = lngLatToH3Cell({
         lng: wrapLongitude(event.lngLat.lng),
@@ -522,19 +619,24 @@ export function MapView({
 
     const canvas = map.getCanvas();
 
-    canvas.style.cursor = getBrushCursor(brushModeRef.current);
+    canvas.style.cursor = getMapCursor(
+      brushModeRef.current,
+      homePickModeEnabledRef.current,
+    );
     applyH3PreviewStyle(map, brushModeRef.current);
 
     map.on("load", handleMapLoad);
     map.on("styledata", handleStyleData);
     map.on("moveend", handleMoveEnd);
     map.on("mousedown", handleMouseDown);
+    map.on("click", handleMapClick);
     map.on("mousemove", handleMouseMove);
     map.on("mouseup", stopBrushStroke);
     canvas.addEventListener("mouseleave", clearPreview);
     window.addEventListener("mouseup", stopBrushStroke);
 
     mapRef.current = map;
+    syncHomeMarker(map, homeMarkerRef, homeLocationRef.current);
 
     return () => {
       stopBrushStroke();
@@ -542,10 +644,13 @@ export function MapView({
       map.off("styledata", handleStyleData);
       map.off("moveend", handleMoveEnd);
       map.off("mousedown", handleMouseDown);
+      map.off("click", handleMapClick);
       map.off("mousemove", handleMouseMove);
       map.off("mouseup", stopBrushStroke);
       canvas.removeEventListener("mouseleave", clearPreview);
       window.removeEventListener("mouseup", stopBrushStroke);
+      homeMarkerRef.current?.remove();
+      homeMarkerRef.current = null;
       map.remove();
       mapRef.current = null;
     };
@@ -619,13 +724,20 @@ function clampLatitude(lat: number): number {
   return Math.max(-90, Math.min(90, lat));
 }
 
-function getBrushCursor(brushMode: BrushMode | null): string {
+function getMapCursor(
+  brushMode: BrushMode | null,
+  homePickModeEnabled: boolean,
+): string {
   if (brushMode === "paint") {
     return "crosshair";
   }
 
   if (brushMode === "erase") {
     return "not-allowed";
+  }
+
+  if (homePickModeEnabled) {
+    return "copy";
   }
 
   return "";
