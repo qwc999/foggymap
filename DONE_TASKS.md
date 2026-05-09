@@ -603,3 +603,31 @@ Frontend tests на наличие отдельного status view и отсу�
 - Удалены `frontend/src/paint/homeRadius.ts` и `homeRadius.test.ts`; toolbar tests обновлены и проверяют отсутствие удаленных controls.
 - Home location, pick home и go home оставлены.
 - Проверено через Docker: frontend format, typecheck, full Vitest, lint, build.
+
+---
+
+## FOG-024 - Undo Для Paint/Erase В Текущей Сессии
+
+**Status:** Done
+
+**Description:**
+Добавить отмену последнего действия закраски или ластика через `Ctrl+Z` и отдельную кнопку undo на карте.
+
+**Acceptance:**
+- `Ctrl+Z` отменяет последнее действие paint или erase, пока пользователь находится на сайте.
+- После reload/закрытия приложения история undo не сохраняется и не восстанавливается.
+- Есть кнопка undo в интерфейсе карты, работающая так же, как `Ctrl+Z`.
+- Кнопка undo disabled или визуально неактивна, когда отменять нечего.
+- Undo корректно обновляет overlay и SQLite: отмена paint удаляет добавленные ячейки, отмена erase возвращает стертые ячейки.
+- Undo не ломает текущие pending paint/erase batches и viewport reload.
+
+**Tests:**
+Frontend unit tests на in-memory undo stack и mutation planning. При необходимости E2E/ручная проверка paint -> undo и erase -> undo.
+
+**Notes:**
+- Добавлена in-memory undo history для paint/erase actions: текущий stroke собирается отдельно, на завершении попадает в стек, а undo создает обратную paint/erase mutation.
+- `Ctrl+Z` и кнопка `undo-paint-action` используют один обработчик; кнопка выключена, когда стек undo пустой.
+- Undo работает через существующие pending paint/erase sets: отмена несохраненного paint отменяет pending paint, а отмена уже отправленного paint ставит pending erase.
+- История undo очищается при reload приложения естественно, потому что хранится только в React refs; при import backup она очищается явно.
+- Проверено через Docker: frontend format, typecheck, full Vitest, lint, build.
+- Проверено в локальном compose через in-app browser: paint -> `Ctrl+Z` уменьшает overlay count обратно; paint -> erase -> кнопка undo возвращает стертые cells; повторный `Ctrl+Z` возвращает overlay count к исходному, статус Paint становится `saved`.

@@ -24,6 +24,15 @@ import {
   type BrushMode,
 } from "@/paint/brush";
 import {
+  clearPaintUndoHistory,
+  createPaintUndoHistory,
+  createUndoMutation,
+  finalizePaintUndoAction,
+  getPaintUndoStackSize,
+  popPaintUndoAction,
+  recordPaintUndoCells,
+} from "@/paint/undo";
+import {
   PAINTED_CELLS_VIEWPORT_DEBOUNCE_MS,
   PAINTED_CELLS_VIEWPORT_QUERY_LIMIT,
   createViewportPaintedH3Ids,
@@ -90,6 +99,7 @@ export function App() {
     useState<PaintedCellsBbox | null>(null);
   const [paintPersistenceState, setPaintPersistenceState] =
     useState<PaintPersistenceState>("idle");
+  const [undoStackSize, setUndoStackSize] = useState(0);
   const lastPersistedMapStateSignatureRef = useRef<string | null>(null);
   const lastPersistedBrushRadiusRef = useRef<number | null>(null);
   const saveSequenceRef = useRef(0);
@@ -100,6 +110,7 @@ export function App() {
   const pendingEraseH3IdsRef = useRef<Set<string>>(new Set());
   const isSavingPaintMutationsRef = useRef(false);
   const viewportLoadSequenceRef = useRef(0);
+  const undoHistoryRef = useRef(createPaintUndoHistory());
 
   const hasPendingPaintChanges = useCallback(
     () =>
@@ -137,6 +148,22 @@ export function App() {
     mapPersistenceState,
     paintPersistenceState,
   ]);
+
+  const finalizeCurrentUndoAction = useCallback(() => {
+    setUndoStackSize(finalizePaintUndoAction(undoHistoryRef.current));
+  }, []);
+
+  const recordPaintUndoAction = useCallback(
+    (mode: BrushMode, h3Ids: readonly string[]) => {
+      setUndoStackSize(recordPaintUndoCells(undoHistoryRef.current, mode, h3Ids));
+    },
+    [],
+  );
+
+  const clearUndoHistory = useCallback(() => {
+    clearPaintUndoHistory(undoHistoryRef.current);
+    setUndoStackSize(0);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -373,6 +400,8 @@ export function App() {
   }, []);
 
   const flushPendingPaintMutations = useCallback(() => {
+    finalizeCurrentUndoAction();
+
     if (
       isSavingPaintMutationsRef.current ||
       (pendingPaintH3IdsRef.current.size === 0 &&
@@ -427,7 +456,7 @@ export function App() {
         }
       }
     })();
-  }, []);
+  }, [finalizeCurrentUndoAction]);
 
   useEffect(() => {
     if (!paintedCellsViewportBbox) {
@@ -581,6 +610,7 @@ export function App() {
 
     pendingPaintH3IdsRef.current.clear();
     pendingEraseH3IdsRef.current.clear();
+    clearUndoHistory();
     lastPersistedMapStateSignatureRef.current =
       getMapViewStateSignature(nextMapViewState);
     lastPersistedBrushRadiusRef.current = nextBrushRadiusMeters;
@@ -606,7 +636,7 @@ export function App() {
       replaceVisiblePaintedH3Ids([]);
       setPaintPersistenceState("idle");
     }
-  }, [paintedCellsViewportBbox, replaceVisiblePaintedH3Ids]);
+  }, [clearUndoHistory, paintedCellsViewportBbox, replaceVisiblePaintedH3Ids]);
 
   const handleExportBackup = useCallback(() => {
     const backupBlockMessage = getBackupBlockMessage();
@@ -688,8 +718,10 @@ export function App() {
           pendingPaintH3IdsRef.current.add(h3Id);
         }
       }
+
+      recordPaintUndoAction("paint", newH3Ids);
     },
-    [addVisiblePaintedH3Ids],
+    [addVisiblePaintedH3Ids, recordPaintUndoAction],
   );
 
   const handleEraseCells = useCallback(
@@ -701,9 +733,66 @@ export function App() {
           pendingEraseH3IdsRef.current.add(h3Id);
         }
       }
+
+      recordPaintUndoAction("erase", erasedH3Ids);
     },
-    [removeVisiblePaintedH3Ids],
+    [recordPaintUndoAction, removeVisiblePaintedH3Ids],
   );
+
+  const handleUndo = useCallback(() => {
+    const action = popPaintUndoAction(undoHistoryRef.current);
+    setUndoStackSize(getPaintUndoStackSize(undoHistoryRef.current));
+
+    if (!action) {
+      return;
+    }
+
+    const { paintH3Ids, eraseH3Ids } = createUndoMutation(action);
+
+    if (eraseH3Ids.length > 0) {
+      removeVisiblePaintedH3Ids(eraseH3Ids);
+
+      for (const h3Id of eraseH3Ids) {
+        if (!pendingPaintH3IdsRef.current.delete(h3Id)) {
+          pendingEraseH3IdsRef.current.add(h3Id);
+        }
+      }
+    }
+
+    if (paintH3Ids.length > 0) {
+      addVisiblePaintedH3Ids(paintH3Ids);
+
+      for (const h3Id of paintH3Ids) {
+        if (!pendingEraseH3IdsRef.current.delete(h3Id)) {
+          pendingPaintH3IdsRef.current.add(h3Id);
+        }
+      }
+    }
+
+    flushPendingPaintMutations();
+  }, [addVisiblePaintedH3Ids, flushPendingPaintMutations, removeVisiblePaintedH3Ids]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        !(event.ctrlKey || event.metaKey) ||
+        event.shiftKey ||
+        event.key.toLowerCase() !== "z" ||
+        isEditableElement(event.target)
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      handleUndo();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [handleUndo]);
 
   const backupBlockMessage = getBackupBlockMessage();
   const backupBusy =
@@ -750,6 +839,7 @@ export function App() {
         brushMode={brushMode}
         brushRadiusMeters={brushRadiusMeters}
         backupBusy={backupBusy}
+        canUndo={undoStackSize > 0}
         hasHomeLocation={Boolean(homeLocation)}
         homePickModeEnabled={homePickModeEnabled}
         mapMode={mapViewState.mode}
@@ -761,6 +851,7 @@ export function App() {
         onMapModeChange={handleMapModeChange}
         onSetHomeFromCenter={handleSetHomeFromCenter}
         onToggleHomePickMode={handleToggleHomePickMode}
+        onUndo={handleUndo}
       />
 
       <Button
@@ -776,6 +867,19 @@ export function App() {
         <Activity className="h-5 w-5 stroke-[2.4]" />
       </Button>
     </main>
+  );
+}
+
+function isEditableElement(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return (
+    target.isContentEditable ||
+    target.tagName === "INPUT" ||
+    target.tagName === "TEXTAREA" ||
+    target.tagName === "SELECT"
   );
 }
 

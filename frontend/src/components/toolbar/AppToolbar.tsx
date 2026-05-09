@@ -9,6 +9,7 @@ import {
   MousePointerClick,
   Ruler,
   Satellite,
+  Undo2,
   Upload,
 } from "lucide-react";
 
@@ -26,9 +27,11 @@ interface AppToolbarProps {
   hasHomeLocation: boolean;
   homePickModeEnabled: boolean;
   backupBusy: boolean;
+  canUndo: boolean;
   onMapModeChange: (mode: MapMode) => void;
   onBrushModeChange: (mode: BrushMode | null) => void;
   onBrushRadiusChange: (radiusMeters: number) => void;
+  onUndo: () => void;
   onGoHome: () => void;
   onSetHomeFromCenter: () => void;
   onToggleHomePickMode: () => void;
@@ -68,9 +71,11 @@ export function AppToolbar({
   hasHomeLocation,
   homePickModeEnabled,
   backupBusy,
+  canUndo,
   onMapModeChange,
   onBrushModeChange,
   onBrushRadiusChange,
+  onUndo,
   onGoHome,
   onSetHomeFromCenter,
   onToggleHomePickMode,
@@ -149,6 +154,18 @@ export function AppToolbar({
           onClick={() => onBrushModeChange(brushMode === "erase" ? null : "erase")}
         >
           <Eraser className={iconClassName} />
+        </Button>
+        <Button
+          aria-label="Undo"
+          className={getIconButtonClassName({ disabled: !canUndo })}
+          data-testid="undo-paint-action"
+          disabled={!canUndo}
+          size="icon"
+          title="Undo"
+          variant="secondary"
+          onClick={onUndo}
+        >
+          <Undo2 className={iconClassName} />
         </Button>
       </div>
 

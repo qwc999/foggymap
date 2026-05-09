@@ -10,6 +10,7 @@ describe("AppToolbar", () => {
         brushMode="paint"
         brushRadiusMeters={45}
         backupBusy={false}
+        canUndo
         hasHomeLocation
         homePickModeEnabled={false}
         mapMode="satellite"
@@ -21,6 +22,7 @@ describe("AppToolbar", () => {
         onMapModeChange={vi.fn()}
         onSetHomeFromCenter={vi.fn()}
         onToggleHomePickMode={vi.fn()}
+        onUndo={vi.fn()}
       />,
     );
 
@@ -32,6 +34,7 @@ describe("AppToolbar", () => {
     expect(html).toContain("h-5 w-5");
     expect(html).toContain('data-testid="paint-mode"');
     expect(html).toContain('data-testid="erase-mode"');
+    expect(html).toContain('data-testid="undo-paint-action"');
     expect(html).toContain('data-testid="home-button"');
     expect(html).toContain('data-testid="set-home-center"');
     expect(html).toContain('data-testid="pick-home-on-map"');
@@ -49,6 +52,7 @@ describe("AppToolbar", () => {
         brushMode={null}
         brushRadiusMeters={30}
         backupBusy={false}
+        canUndo={false}
         hasHomeLocation={false}
         homePickModeEnabled={false}
         mapMode="street"
@@ -60,6 +64,7 @@ describe("AppToolbar", () => {
         onMapModeChange={vi.fn()}
         onSetHomeFromCenter={vi.fn()}
         onToggleHomePickMode={vi.fn()}
+        onUndo={vi.fn()}
       />,
     );
 
@@ -74,6 +79,7 @@ describe("AppToolbar", () => {
         brushMode={null}
         brushRadiusMeters={30}
         backupBusy={false}
+        canUndo={false}
         hasHomeLocation
         homePickModeEnabled
         mapMode="street"
@@ -85,6 +91,7 @@ describe("AppToolbar", () => {
         onMapModeChange={vi.fn()}
         onSetHomeFromCenter={vi.fn()}
         onToggleHomePickMode={vi.fn()}
+        onUndo={vi.fn()}
       />,
     );
 
@@ -98,6 +105,7 @@ describe("AppToolbar", () => {
         brushMode={null}
         brushRadiusMeters={30}
         backupBusy={false}
+        canUndo={false}
         hasHomeLocation
         homePickModeEnabled={false}
         mapMode="street"
@@ -109,10 +117,38 @@ describe("AppToolbar", () => {
         onMapModeChange={vi.fn()}
         onSetHomeFromCenter={vi.fn()}
         onToggleHomePickMode={vi.fn()}
+        onUndo={vi.fn()}
       />,
     );
 
     expect(html).not.toContain('data-testid="home-radius-preview"');
     expect(html).not.toContain('data-testid="paint-home-radius"');
+  });
+
+  it("disables undo when there is no in-memory paint action", () => {
+    const html = renderToStaticMarkup(
+      <AppToolbar
+        brushMode={null}
+        brushRadiusMeters={30}
+        backupBusy={false}
+        canUndo={false}
+        hasHomeLocation
+        homePickModeEnabled={false}
+        mapMode="street"
+        onBrushModeChange={vi.fn()}
+        onBrushRadiusChange={vi.fn()}
+        onGoHome={vi.fn()}
+        onExportBackup={vi.fn()}
+        onImportBackupFile={vi.fn()}
+        onMapModeChange={vi.fn()}
+        onSetHomeFromCenter={vi.fn()}
+        onToggleHomePickMode={vi.fn()}
+        onUndo={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain('data-testid="undo-paint-action"');
+    expect(html).toContain("disabled");
+    expect(html).toContain("text-slate-500");
   });
 });
