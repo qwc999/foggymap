@@ -20,11 +20,9 @@ import {
   chunkPaintCellInputs,
   createCellRefInputs,
   createPaintCellInputs,
-  mergePaintedH3Ids,
   removePaintedH3Ids,
   type BrushMode,
 } from "@/paint/brush";
-import { createHomeRadiusPaintH3Ids, HOME_RADIUS_METERS } from "@/paint/homeRadius";
 import {
   PAINTED_CELLS_VIEWPORT_DEBOUNCE_MS,
   PAINTED_CELLS_VIEWPORT_QUERY_LIMIT,
@@ -58,7 +56,6 @@ type HealthState = "loading" | "ok" | "error";
 type MapPersistenceState = "loading" | "saved" | "saving" | "error";
 type BrushPersistenceState = "loading" | "saved" | "saving" | "error";
 type HomePersistenceState = "loading" | "saved" | "saving" | "error";
-type HomeRadiusPaintState = "idle" | "confirming" | "painting" | "saved" | "error";
 type BackupState = "idle" | "exporting" | "importing" | "saved" | "error";
 type ActiveView = "map" | "status";
 type PaintPersistenceState =
@@ -84,13 +81,6 @@ export function App() {
     useState<BrushPersistenceState>("loading");
   const [homeLocation, setHomeLocation] = useState<HomeLocationState | null>(null);
   const [homePickModeEnabled, setHomePickModeEnabled] = useState(false);
-  const [homeRadiusPreviewEnabled, setHomeRadiusPreviewEnabled] = useState(false);
-  const [homeRadiusPaintState, setHomeRadiusPaintState] =
-    useState<HomeRadiusPaintState>("idle");
-  const [homeRadiusPaintProgress, setHomeRadiusPaintProgress] = useState<{
-    painted: number;
-    total: number;
-  } | null>(null);
   const [backupState, setBackupState] = useState<BackupState>("idle");
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [homePersistenceState, setHomePersistenceState] =
@@ -127,11 +117,7 @@ export function App() {
       return "Wait until app state is loaded.";
     }
 
-    if (
-      hasPendingPaintChanges() ||
-      paintPersistenceState === "saving" ||
-      homeRadiusPaintState === "painting"
-    ) {
+    if (hasPendingPaintChanges() || paintPersistenceState === "saving") {
       return "Wait until paint changes are saved.";
     }
 
@@ -148,7 +134,6 @@ export function App() {
     brushPersistenceState,
     hasPendingPaintChanges,
     homePersistenceState,
-    homeRadiusPaintState,
     mapPersistenceState,
     paintPersistenceState,
   ]);
@@ -350,15 +335,6 @@ export function App() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!homeLocation) {
-      setHomeRadiusPreviewEnabled(false);
-      setHomeRadiusPaintState((currentState) =>
-        currentState === "painting" ? currentState : "idle",
-      );
-    }
-  }, [homeLocation]);
-
   const replaceVisiblePaintedH3Ids = useCallback((h3Ids: readonly string[]) => {
     paintedH3IdSetRef.current = new Set(h3Ids);
     setPaintedH3Ids([...paintedH3IdSetRef.current]);
@@ -381,15 +357,6 @@ export function App() {
     }
 
     return nextH3Ids;
-  }, []);
-
-  const mergeVisiblePaintedH3Ids = useCallback((h3Ids: readonly string[]) => {
-    const mergedH3Ids = mergePaintedH3Ids([...paintedH3IdSetRef.current], h3Ids);
-
-    if (mergedH3Ids.length !== paintedH3IdSetRef.current.size) {
-      paintedH3IdSetRef.current = new Set(mergedH3Ids);
-      setPaintedH3Ids(mergedH3Ids);
-    }
   }, []);
 
   const removeVisiblePaintedH3Ids = useCallback((h3Ids: readonly string[]) => {
@@ -594,74 +561,6 @@ export function App() {
     setHomePickModeEnabled((currentValue) => !currentValue);
   }, []);
 
-  const handleToggleHomeRadiusPreview = useCallback(() => {
-    if (!homeLocation) {
-      return;
-    }
-
-    setHomeRadiusPreviewEnabled((currentValue) => !currentValue);
-  }, [homeLocation]);
-
-  const handleRequestHomeRadiusPaint = useCallback(() => {
-    if (!homeLocation || homeRadiusPaintState === "painting") {
-      return;
-    }
-
-    setHomeRadiusPaintProgress(null);
-    setHomeRadiusPaintState("confirming");
-  }, [homeLocation, homeRadiusPaintState]);
-
-  const handleCancelHomeRadiusPaint = useCallback(() => {
-    setHomeRadiusPaintState("idle");
-    setHomeRadiusPaintProgress(null);
-  }, []);
-
-  const handleConfirmHomeRadiusPaint = useCallback(() => {
-    if (!homeLocation || homeRadiusPaintState !== "confirming") {
-      return;
-    }
-
-    const homeCenter = {
-      lng: homeLocation.longitude,
-      lat: homeLocation.latitude,
-    };
-
-    setHomeRadiusPaintState("painting");
-    setPaintPersistenceState("saving");
-
-    void (async () => {
-      try {
-        const h3Ids = createHomeRadiusPaintH3Ids(homeCenter, HOME_RADIUS_METERS);
-        const cells = createPaintCellInputs(h3Ids);
-        let painted = 0;
-
-        setHomeRadiusPaintProgress({ painted, total: cells.length });
-        setHomeRadiusPreviewEnabled(true);
-
-        for (const h3Id of h3Ids) {
-          pendingPaintH3IdsRef.current.delete(h3Id);
-          pendingEraseH3IdsRef.current.delete(h3Id);
-        }
-
-        mergeVisiblePaintedH3Ids(h3Ids);
-        await yieldToBrowser();
-
-        for (const batch of chunkPaintCellInputs(cells)) {
-          await paintCells(batch);
-          painted += batch.length;
-          setHomeRadiusPaintProgress({ painted, total: cells.length });
-          await yieldToBrowser();
-        }
-
-        setPaintPersistenceState("saved");
-        setHomeRadiusPaintState("saved");
-      } catch {
-        setPaintPersistenceState("error");
-        setHomeRadiusPaintState("error");
-      }
-    })();
-  }, [homeLocation, homeRadiusPaintState, mergeVisiblePaintedH3Ids]);
-
   const reloadUserStateAfterBackupImport = useCallback(async () => {
     const [storedMapViewState, storedBrushRadius, storedHomeLocation, visibleCells] =
       await Promise.all([
@@ -692,9 +591,6 @@ export function App() {
     setBrushPersistenceState("saved");
     setHomeLocation(nextHomeLocation);
     setHomePickModeEnabled(false);
-    setHomeRadiusPreviewEnabled(false);
-    setHomeRadiusPaintState("idle");
-    setHomeRadiusPaintProgress(null);
     setHomePersistenceState("saved");
 
     if (visibleCells) {
@@ -820,9 +716,6 @@ export function App() {
     brushPersistenceState,
     homePersistenceState,
     homeLocation,
-    homeRadiusPaintState,
-    homeRadiusPaintProgress,
-    homeRadiusPreviewEnabled,
     paintPersistenceState,
     backupState,
     backupMessage,
@@ -844,7 +737,6 @@ export function App() {
         brushRadiusMeters={brushRadiusMeters}
         homeLocation={homeLocation}
         homePickModeEnabled={homePickModeEnabled}
-        homeRadiusPreviewEnabled={homeRadiusPreviewEnabled}
         paintedH3Ids={paintedH3Ids}
         onViewStateChange={handleMapViewStateChange}
         onViewportBoundsChange={handlePaintedCellsViewportChange}
@@ -860,8 +752,6 @@ export function App() {
         backupBusy={backupBusy}
         hasHomeLocation={Boolean(homeLocation)}
         homePickModeEnabled={homePickModeEnabled}
-        homeRadiusPainting={homeRadiusPaintState === "painting"}
-        homeRadiusPreviewEnabled={homeRadiusPreviewEnabled}
         mapMode={mapViewState.mode}
         onBrushModeChange={handleBrushModeChange}
         onBrushRadiusChange={handleBrushRadiusChange}
@@ -869,9 +759,7 @@ export function App() {
         onGoHome={handleGoHome}
         onImportBackupFile={handleImportBackupFile}
         onMapModeChange={handleMapModeChange}
-        onRequestHomeRadiusPaint={handleRequestHomeRadiusPaint}
         onSetHomeFromCenter={handleSetHomeFromCenter}
-        onToggleHomeRadiusPreview={handleToggleHomeRadiusPreview}
         onToggleHomePickMode={handleToggleHomePickMode}
       />
 
@@ -887,36 +775,6 @@ export function App() {
       >
         <Activity className="h-5 w-5 stroke-[2.4]" />
       </Button>
-
-      {homeRadiusPaintState === "confirming" && (
-        <div
-          className="absolute left-4 top-24 z-10 w-80 rounded-lg border border-white/10 bg-slate-950/85 p-3 text-sm text-slate-100 shadow-2xl backdrop-blur-xl"
-          data-testid="home-radius-confirm"
-        >
-          <div className="font-medium">Paint 10km around home?</div>
-          <div className="mt-1 text-xs text-slate-400">
-            This can add about fifteen thousand H3 cells.
-          </div>
-          <div className="mt-3 flex justify-end gap-2">
-            <button
-              className="rounded-md border border-white/10 bg-white/10 px-3 py-2 text-xs font-medium text-slate-100 transition hover:bg-white/15"
-              data-testid="home-radius-cancel"
-              type="button"
-              onClick={handleCancelHomeRadiusPaint}
-            >
-              Cancel
-            </button>
-            <button
-              className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground transition hover:bg-primary/90"
-              data-testid="home-radius-confirm-paint"
-              type="button"
-              onClick={handleConfirmHomeRadiusPaint}
-            >
-              Paint
-            </button>
-          </div>
-        </div>
-      )}
     </main>
   );
 }
@@ -927,9 +785,6 @@ function createStatusItems({
   brushPersistenceState,
   homePersistenceState,
   homeLocation,
-  homeRadiusPaintState,
-  homeRadiusPaintProgress,
-  homeRadiusPreviewEnabled,
   paintPersistenceState,
   backupState,
   backupMessage,
@@ -940,9 +795,6 @@ function createStatusItems({
   brushPersistenceState: BrushPersistenceState;
   homePersistenceState: HomePersistenceState;
   homeLocation: HomeLocationState | null;
-  homeRadiusPaintState: HomeRadiusPaintState;
-  homeRadiusPaintProgress: { painted: number; total: number } | null;
-  homeRadiusPreviewEnabled: boolean;
   paintPersistenceState: PaintPersistenceState;
   backupState: BackupState;
   backupMessage: string | null;
@@ -979,27 +831,6 @@ function createStatusItems({
         homePersistenceState === "saved" && !homeLocation
           ? "info"
           : persistenceStateTone(homePersistenceState),
-    },
-    {
-      label: "Radius",
-      value:
-        homeRadiusPaintState === "painting" && homeRadiusPaintProgress
-          ? `${homeRadiusPaintProgress.painted}/${homeRadiusPaintProgress.total}`
-          : homeRadiusPaintState === "confirming"
-            ? "confirm"
-            : homeRadiusPaintState === "saved"
-              ? "saved"
-              : homeRadiusPaintState === "error"
-                ? "error"
-                : homeRadiusPreviewEnabled
-                  ? "shown"
-                  : "ready",
-      tone:
-        homeRadiusPaintState === "error"
-          ? "error"
-          : homeRadiusPaintState === "painting" || homeRadiusPaintState === "confirming"
-            ? "pending"
-            : "ok",
     },
     {
       label: "Paint",
@@ -1078,10 +909,4 @@ function downloadBackupDocument(backup: BackupDocument): void {
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(objectUrl);
-}
-
-function yieldToBrowser(): Promise<void> {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, 0);
-  });
 }

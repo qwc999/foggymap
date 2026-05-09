@@ -12,8 +12,6 @@ describe("AppToolbar", () => {
         backupBusy={false}
         hasHomeLocation
         homePickModeEnabled={false}
-        homeRadiusPainting={false}
-        homeRadiusPreviewEnabled={false}
         mapMode="satellite"
         onBrushModeChange={vi.fn()}
         onBrushRadiusChange={vi.fn()}
@@ -21,9 +19,7 @@ describe("AppToolbar", () => {
         onExportBackup={vi.fn()}
         onImportBackupFile={vi.fn()}
         onMapModeChange={vi.fn()}
-        onRequestHomeRadiusPaint={vi.fn()}
         onSetHomeFromCenter={vi.fn()}
-        onToggleHomeRadiusPreview={vi.fn()}
         onToggleHomePickMode={vi.fn()}
       />,
     );
@@ -39,8 +35,6 @@ describe("AppToolbar", () => {
     expect(html).toContain('data-testid="home-button"');
     expect(html).toContain('data-testid="set-home-center"');
     expect(html).toContain('data-testid="pick-home-on-map"');
-    expect(html).toContain('data-testid="home-radius-preview"');
-    expect(html).toContain('data-testid="paint-home-radius"');
     expect(html).toContain('data-testid="export-backup"');
     expect(html).toContain('data-testid="import-backup"');
     expect(html).toContain('data-testid="backup-file-input"');
@@ -57,8 +51,6 @@ describe("AppToolbar", () => {
         backupBusy={false}
         hasHomeLocation={false}
         homePickModeEnabled={false}
-        homeRadiusPainting={false}
-        homeRadiusPreviewEnabled={false}
         mapMode="street"
         onBrushModeChange={vi.fn()}
         onBrushRadiusChange={vi.fn()}
@@ -66,9 +58,7 @@ describe("AppToolbar", () => {
         onExportBackup={vi.fn()}
         onImportBackupFile={vi.fn()}
         onMapModeChange={vi.fn()}
-        onRequestHomeRadiusPaint={vi.fn()}
         onSetHomeFromCenter={vi.fn()}
-        onToggleHomeRadiusPreview={vi.fn()}
         onToggleHomePickMode={vi.fn()}
       />,
     );
@@ -86,8 +76,6 @@ describe("AppToolbar", () => {
         backupBusy={false}
         hasHomeLocation
         homePickModeEnabled
-        homeRadiusPainting={false}
-        homeRadiusPreviewEnabled={false}
         mapMode="street"
         onBrushModeChange={vi.fn()}
         onBrushRadiusChange={vi.fn()}
@@ -95,9 +83,7 @@ describe("AppToolbar", () => {
         onExportBackup={vi.fn()}
         onImportBackupFile={vi.fn()}
         onMapModeChange={vi.fn()}
-        onRequestHomeRadiusPaint={vi.fn()}
         onSetHomeFromCenter={vi.fn()}
-        onToggleHomeRadiusPreview={vi.fn()}
         onToggleHomePickMode={vi.fn()}
       />,
     );
@@ -106,7 +92,7 @@ describe("AppToolbar", () => {
     expect(html).toContain('aria-pressed="true"');
   });
 
-  it("marks the home radius preview as active", () => {
+  it("does not render removed home radius controls", () => {
     const html = renderToStaticMarkup(
       <AppToolbar
         brushMode={null}
@@ -114,8 +100,6 @@ describe("AppToolbar", () => {
         backupBusy={false}
         hasHomeLocation
         homePickModeEnabled={false}
-        homeRadiusPainting={false}
-        homeRadiusPreviewEnabled
         mapMode="street"
         onBrushModeChange={vi.fn()}
         onBrushRadiusChange={vi.fn()}
@@ -123,14 +107,12 @@ describe("AppToolbar", () => {
         onExportBackup={vi.fn()}
         onImportBackupFile={vi.fn()}
         onMapModeChange={vi.fn()}
-        onRequestHomeRadiusPaint={vi.fn()}
         onSetHomeFromCenter={vi.fn()}
-        onToggleHomeRadiusPreview={vi.fn()}
         onToggleHomePickMode={vi.fn()}
       />,
     );
 
-    expect(html).toContain('data-testid="home-radius-preview"');
-    expect(html).toContain('aria-pressed="true"');
+    expect(html).not.toContain('data-testid="home-radius-preview"');
+    expect(html).not.toContain('data-testid="paint-home-radius"');
   });
 });

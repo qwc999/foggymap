@@ -576,3 +576,30 @@ Frontend tests на наличие отдельного status view и отсу�
 - На карте добавлена компактная отдельная кнопка `open-status-view` справа сверху, не внутри основного toolbar.
 - Добавлен компонентный тест `AppStatusView.test.tsx`.
 - Проверено через Docker: frontend format, typecheck, AppStatusView test, lint, build.
+
+---
+
+## FOG-023 - Удалить Home Radius 10км
+
+**Status:** Done
+
+**Description:**
+Удалить функционал показа зоны радиусом 10 км вокруг дома и bulk-закраски этой зоны. Home location должен остаться только как точка дома и быстрый переход к ней.
+
+**Acceptance:**
+- В toolbar больше нет кнопок показа 10км радиуса и закраски 10км радиуса.
+- На карте больше не рисуется home radius preview.
+- Confirmation panel для закраски 10км удален.
+- Код bulk-закраски 10км вокруг дома удален или перестает быть частью приложения.
+- Функции установки home и перехода домой продолжают работать.
+
+**Tests:**
+Обновить/удалить frontend tests, связанные с home radius. Проверить, что home location tests продолжают проходить.
+
+**Notes:**
+- Удалены toolbar controls `home-radius-preview` и `paint-home-radius`.
+- Удалены confirmation panel, state и bulk-paint flow для 10км вокруг дома.
+- `MapView` больше не создает source/layers `home-radius` и не принимает prop `homeRadiusPreviewEnabled`.
+- Удалены `frontend/src/paint/homeRadius.ts` и `homeRadius.test.ts`; toolbar tests обновлены и проверяют отсутствие удаленных controls.
+- Home location, pick home и go home оставлены.
+- Проверено через Docker: frontend format, typecheck, full Vitest, lint, build.

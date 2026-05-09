@@ -1,14 +1,12 @@
 import { useRef, type ChangeEvent } from "react";
 import {
   Brush,
-  CircleDashed,
   Download,
   Eraser,
   Home,
   MapPinPlus,
   MapPinned,
   MousePointerClick,
-  PaintBucket,
   Ruler,
   Satellite,
   Upload,
@@ -27,8 +25,6 @@ interface AppToolbarProps {
   brushRadiusMeters: number;
   hasHomeLocation: boolean;
   homePickModeEnabled: boolean;
-  homeRadiusPreviewEnabled: boolean;
-  homeRadiusPainting: boolean;
   backupBusy: boolean;
   onMapModeChange: (mode: MapMode) => void;
   onBrushModeChange: (mode: BrushMode | null) => void;
@@ -36,8 +32,6 @@ interface AppToolbarProps {
   onGoHome: () => void;
   onSetHomeFromCenter: () => void;
   onToggleHomePickMode: () => void;
-  onToggleHomeRadiusPreview: () => void;
-  onRequestHomeRadiusPaint: () => void;
   onExportBackup: () => void;
   onImportBackupFile: (file: File) => void;
 }
@@ -73,8 +67,6 @@ export function AppToolbar({
   brushRadiusMeters,
   hasHomeLocation,
   homePickModeEnabled,
-  homeRadiusPreviewEnabled,
-  homeRadiusPainting,
   backupBusy,
   onMapModeChange,
   onBrushModeChange,
@@ -82,8 +74,6 @@ export function AppToolbar({
   onGoHome,
   onSetHomeFromCenter,
   onToggleHomePickMode,
-  onToggleHomeRadiusPreview,
-  onRequestHomeRadiusPaint,
   onExportBackup,
   onImportBackupFile,
 }: AppToolbarProps) {
@@ -197,36 +187,6 @@ export function AppToolbar({
           onClick={onToggleHomePickMode}
         >
           <MousePointerClick className={iconClassName} />
-        </Button>
-        <Button
-          aria-label="Show home radius"
-          aria-pressed={homeRadiusPreviewEnabled}
-          className={getIconButtonClassName({
-            active: homeRadiusPreviewEnabled,
-            disabled: !hasHomeLocation,
-          })}
-          data-testid="home-radius-preview"
-          disabled={!hasHomeLocation}
-          size="icon"
-          title="10km radius"
-          variant="secondary"
-          onClick={onToggleHomeRadiusPreview}
-        >
-          <CircleDashed className={iconClassName} />
-        </Button>
-        <Button
-          aria-label="Paint home radius"
-          className={getIconButtonClassName({
-            disabled: !hasHomeLocation || homeRadiusPainting,
-          })}
-          data-testid="paint-home-radius"
-          disabled={!hasHomeLocation || homeRadiusPainting}
-          size="icon"
-          title="Paint 10km radius"
-          variant="secondary"
-          onClick={onRequestHomeRadiusPaint}
-        >
-          <PaintBucket className={iconClassName} />
         </Button>
       </div>
 
