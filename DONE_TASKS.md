@@ -551,3 +551,28 @@ Frontend component tests для toolbar states, если изменение мо
 - Lucide-иконки увеличены до `h-5 w-5` и получили более толстый stroke, чтобы не пропадать на темном фоне.
 - Компонентные тесты проверяют active/disabled classes и размер иконок.
 - Проверено через Docker: frontend format, typecheck, AppToolbar tests, lint, build.
+
+---
+
+## FOG-022 - Вынести Технический Статус С Карты
+
+**Status:** Done
+
+**Description:**
+Убрать нижний статусный блок с карты (`Backend: available`, `Map state`, `Brush`, `Home`, `Paint`, `Backup` и т.д.) и перенести эти данные на отдельную страницу/экран.
+
+**Acceptance:**
+- На экране карты больше нет нижнего технического status overlay.
+- Есть отдельная страница/экран, где можно посмотреть backend/app-state/brush/home/paint/backup status.
+- С карты можно попасть на этот экран понятным способом, не перегружая основной toolbar.
+- Возврат со status-экрана обратно на карту очевиден.
+
+**Tests:**
+Frontend tests на наличие отдельного status view и отсутствие status overlay на map view, если структура позволит.
+
+**Notes:**
+- Нижний status overlay удален с карты.
+- Добавлен отдельный `AppStatusView` с runtime/persistence статусами и кнопкой возврата на карту.
+- На карте добавлена компактная отдельная кнопка `open-status-view` справа сверху, не внутри основного toolbar.
+- Добавлен компонентный тест `AppStatusView.test.tsx`.
+- Проверено через Docker: frontend format, typecheck, AppStatusView test, lint, build.

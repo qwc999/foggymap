@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Activity } from "lucide-react";
 
 import { exportBackup, importBackupOverwrite, type BackupDocument } from "@/api/backup";
 import { loadAppState, saveAppState, type JsonValue } from "@/api/appState";
@@ -10,9 +11,10 @@ import {
 } from "@/api/paintedCells";
 import { loadHomeLocation, saveHomeLocation } from "@/api/homeLocation";
 import { MapView } from "@/components/map/MapView";
+import { AppStatusView, type StatusItem } from "@/components/status/AppStatusView";
 import { AppToolbar } from "@/components/toolbar/AppToolbar";
+import { Button } from "@/components/ui/button";
 import type { MapMode } from "@/config/mapProviders";
-import { cn } from "@/lib/utils";
 import {
   chunkCellRefInputs,
   chunkPaintCellInputs,
@@ -58,6 +60,7 @@ type BrushPersistenceState = "loading" | "saved" | "saving" | "error";
 type HomePersistenceState = "loading" | "saved" | "saving" | "error";
 type HomeRadiusPaintState = "idle" | "confirming" | "painting" | "saved" | "error";
 type BackupState = "idle" | "exporting" | "importing" | "saved" | "error";
+type ActiveView = "map" | "status";
 type PaintPersistenceState =
   | "idle"
   | "loading"
@@ -67,6 +70,7 @@ type PaintPersistenceState =
   | "error";
 
 export function App() {
+  const [activeView, setActiveView] = useState<ActiveView>("map");
   const [health, setHealth] = useState<HealthState>("loading");
   const [mapViewState, setMapViewState] =
     useState<MapViewState>(DEFAULT_MAP_VIEW_STATE);
@@ -810,6 +814,26 @@ export function App() {
     backupState === "exporting" ||
     backupState === "importing" ||
     Boolean(backupBlockMessage);
+  const statusItems = createStatusItems({
+    health,
+    mapPersistenceState,
+    brushPersistenceState,
+    homePersistenceState,
+    homeLocation,
+    homeRadiusPaintState,
+    homeRadiusPaintProgress,
+    homeRadiusPreviewEnabled,
+    paintPersistenceState,
+    backupState,
+    backupMessage,
+    backupBlockMessage,
+  });
+
+  if (activeView === "status") {
+    return (
+      <AppStatusView items={statusItems} onBackToMap={() => setActiveView("map")} />
+    );
+  }
 
   return (
     <main className="relative h-screen w-screen overflow-hidden bg-background text-foreground">
@@ -851,6 +875,19 @@ export function App() {
         onToggleHomePickMode={handleToggleHomePickMode}
       />
 
+      <Button
+        aria-label="Open status"
+        className="absolute right-4 top-4 z-10 h-10 w-10 rounded-md border-white/15 bg-slate-950/75 p-0 text-slate-100 shadow-2xl backdrop-blur-xl transition hover:bg-slate-800 hover:text-white focus-visible:ring-cyan-300"
+        data-testid="open-status-view"
+        size="icon"
+        title="Status"
+        type="button"
+        variant="secondary"
+        onClick={() => setActiveView("status")}
+      >
+        <Activity className="h-5 w-5 stroke-[2.4]" />
+      </Button>
+
       {homeRadiusPaintState === "confirming" && (
         <div
           className="absolute left-4 top-24 z-10 w-80 rounded-lg border border-white/10 bg-slate-950/85 p-3 text-sm text-slate-100 shadow-2xl backdrop-blur-xl"
@@ -880,106 +917,151 @@ export function App() {
           </div>
         </div>
       )}
-
-      <div className="absolute bottom-4 left-4 z-10 flex max-w-[calc(100vw-2rem)] flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border bg-background/72 px-4 py-3 text-sm text-slate-200 shadow-2xl backdrop-blur">
-        <span
-          className={cn(
-            "h-2.5 w-2.5 rounded-full bg-amber-400",
-            health === "ok" && "bg-emerald-400",
-            health === "error" && "bg-red-500",
-          )}
-        />
-        <span>
-          Backend:{" "}
-          {health === "loading"
-            ? "checking"
-            : health === "ok"
-              ? "available"
-              : "unavailable"}
-        </span>
-        <span className="text-slate-500">/</span>
-        <span>
-          Map state:{" "}
-          {mapPersistenceState === "loading"
-            ? "loading"
-            : mapPersistenceState === "saving"
-              ? "saving"
-              : mapPersistenceState === "saved"
-                ? "saved"
-                : "error"}
-        </span>
-        <span className="text-slate-500">/</span>
-        <span>
-          Brush:{" "}
-          {brushPersistenceState === "loading"
-            ? "loading"
-            : brushPersistenceState === "saving"
-              ? "saving"
-              : brushPersistenceState === "saved"
-                ? "saved"
-                : "error"}
-        </span>
-        <span className="text-slate-500">/</span>
-        <span>
-          Home:{" "}
-          {homePersistenceState === "loading"
-            ? "loading"
-            : homePersistenceState === "saving"
-              ? "saving"
-              : homePersistenceState === "saved"
-                ? homeLocation
-                  ? "saved"
-                  : "not set"
-                : "error"}
-        </span>
-        <span className="text-slate-500">/</span>
-        <span>
-          Radius:{" "}
-          {homeRadiusPaintState === "painting" && homeRadiusPaintProgress
-            ? `${homeRadiusPaintProgress.painted}/${homeRadiusPaintProgress.total}`
-            : homeRadiusPaintState === "confirming"
-              ? "confirm"
-              : homeRadiusPaintState === "saved"
-                ? "saved"
-                : homeRadiusPaintState === "error"
-                  ? "error"
-                  : homeRadiusPreviewEnabled
-                    ? "shown"
-                    : "ready"}
-        </span>
-        <span className="text-slate-500">/</span>
-        <span>
-          Paint:{" "}
-          {paintPersistenceState === "idle"
-            ? "ready"
-            : paintPersistenceState === "loading"
-              ? "loading"
-              : paintPersistenceState === "saving"
-                ? "saving"
-                : paintPersistenceState === "saved"
-                  ? "saved"
-                  : paintPersistenceState === "limited"
-                    ? "limited"
-                    : "error"}
-        </span>
-        <span className="text-slate-500">/</span>
-        <span>
-          Backup:{" "}
-          {backupState === "idle"
-            ? backupBlockMessage
-              ? "waiting"
-              : "ready"
-            : backupState === "exporting"
-              ? "exporting"
-              : backupState === "importing"
-                ? "importing"
-                : backupState === "saved"
-                  ? (backupMessage ?? "saved")
-                  : (backupMessage ?? "error")}
-        </span>
-      </div>
     </main>
   );
+}
+
+function createStatusItems({
+  health,
+  mapPersistenceState,
+  brushPersistenceState,
+  homePersistenceState,
+  homeLocation,
+  homeRadiusPaintState,
+  homeRadiusPaintProgress,
+  homeRadiusPreviewEnabled,
+  paintPersistenceState,
+  backupState,
+  backupMessage,
+  backupBlockMessage,
+}: {
+  health: HealthState;
+  mapPersistenceState: MapPersistenceState;
+  brushPersistenceState: BrushPersistenceState;
+  homePersistenceState: HomePersistenceState;
+  homeLocation: HomeLocationState | null;
+  homeRadiusPaintState: HomeRadiusPaintState;
+  homeRadiusPaintProgress: { painted: number; total: number } | null;
+  homeRadiusPreviewEnabled: boolean;
+  paintPersistenceState: PaintPersistenceState;
+  backupState: BackupState;
+  backupMessage: string | null;
+  backupBlockMessage: string | null;
+}): StatusItem[] {
+  return [
+    {
+      label: "Backend",
+      value:
+        health === "loading"
+          ? "checking"
+          : health === "ok"
+            ? "available"
+            : "unavailable",
+      tone: health === "ok" ? "ok" : health === "loading" ? "pending" : "error",
+    },
+    {
+      label: "Map state",
+      value: persistenceStateLabel(mapPersistenceState),
+      tone: persistenceStateTone(mapPersistenceState),
+    },
+    {
+      label: "Brush",
+      value: persistenceStateLabel(brushPersistenceState),
+      tone: persistenceStateTone(brushPersistenceState),
+    },
+    {
+      label: "Home",
+      value:
+        homePersistenceState === "saved" && !homeLocation
+          ? "not set"
+          : persistenceStateLabel(homePersistenceState),
+      tone:
+        homePersistenceState === "saved" && !homeLocation
+          ? "info"
+          : persistenceStateTone(homePersistenceState),
+    },
+    {
+      label: "Radius",
+      value:
+        homeRadiusPaintState === "painting" && homeRadiusPaintProgress
+          ? `${homeRadiusPaintProgress.painted}/${homeRadiusPaintProgress.total}`
+          : homeRadiusPaintState === "confirming"
+            ? "confirm"
+            : homeRadiusPaintState === "saved"
+              ? "saved"
+              : homeRadiusPaintState === "error"
+                ? "error"
+                : homeRadiusPreviewEnabled
+                  ? "shown"
+                  : "ready",
+      tone:
+        homeRadiusPaintState === "error"
+          ? "error"
+          : homeRadiusPaintState === "painting" || homeRadiusPaintState === "confirming"
+            ? "pending"
+            : "ok",
+    },
+    {
+      label: "Paint",
+      value:
+        paintPersistenceState === "idle"
+          ? "ready"
+          : persistenceStateLabel(paintPersistenceState),
+      tone:
+        paintPersistenceState === "idle"
+          ? "ok"
+          : persistenceStateTone(paintPersistenceState),
+    },
+    {
+      label: "Backup",
+      value:
+        backupState === "idle"
+          ? backupBlockMessage
+            ? `waiting: ${backupBlockMessage}`
+            : "ready"
+          : backupState === "saved"
+            ? (backupMessage ?? "saved")
+            : backupState === "error"
+              ? (backupMessage ?? "error")
+              : backupState,
+      tone:
+        backupState === "error"
+          ? "error"
+          : backupState === "exporting" ||
+              backupState === "importing" ||
+              backupBlockMessage
+            ? "pending"
+            : "ok",
+    },
+  ];
+}
+
+function persistenceStateLabel(
+  state:
+    | MapPersistenceState
+    | BrushPersistenceState
+    | HomePersistenceState
+    | PaintPersistenceState,
+) {
+  return state === "idle" ? "ready" : state;
+}
+
+function persistenceStateTone(
+  state:
+    | MapPersistenceState
+    | BrushPersistenceState
+    | HomePersistenceState
+    | PaintPersistenceState,
+): StatusItem["tone"] {
+  if (state === "error") {
+    return "error";
+  }
+
+  if (state === "loading" || state === "saving") {
+    return "pending";
+  }
+
+  return "ok";
 }
 
 function downloadBackupDocument(backup: BackupDocument): void {
