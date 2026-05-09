@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { exportBackup, importBackupOverwrite, type BackupDocument } from "@/api/backup";
 import { loadAppState, saveAppState, type JsonValue } from "@/api/appState";
 import {
   eraseCells,
@@ -56,6 +57,7 @@ type MapPersistenceState = "loading" | "saved" | "saving" | "error";
 type BrushPersistenceState = "loading" | "saved" | "saving" | "error";
 type HomePersistenceState = "loading" | "saved" | "saving" | "error";
 type HomeRadiusPaintState = "idle" | "confirming" | "painting" | "saved" | "error";
+type BackupState = "idle" | "exporting" | "importing" | "saved" | "error";
 type PaintPersistenceState =
   | "idle"
   | "loading"
@@ -85,6 +87,8 @@ export function App() {
     painted: number;
     total: number;
   } | null>(null);
+  const [backupState, setBackupState] = useState<BackupState>("idle");
+  const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [homePersistenceState, setHomePersistenceState] =
     useState<HomePersistenceState>("loading");
   const [paintedH3Ids, setPaintedH3Ids] = useState<string[]>([]);
@@ -102,6 +106,48 @@ export function App() {
   const pendingEraseH3IdsRef = useRef<Set<string>>(new Set());
   const isSavingPaintMutationsRef = useRef(false);
   const viewportLoadSequenceRef = useRef(0);
+
+  const hasPendingPaintChanges = useCallback(
+    () =>
+      isSavingPaintMutationsRef.current ||
+      pendingPaintH3IdsRef.current.size > 0 ||
+      pendingEraseH3IdsRef.current.size > 0,
+    [],
+  );
+  const getBackupBlockMessage = useCallback(() => {
+    if (
+      mapPersistenceState === "loading" ||
+      brushPersistenceState === "loading" ||
+      homePersistenceState === "loading"
+    ) {
+      return "Wait until app state is loaded.";
+    }
+
+    if (
+      hasPendingPaintChanges() ||
+      paintPersistenceState === "saving" ||
+      homeRadiusPaintState === "painting"
+    ) {
+      return "Wait until paint changes are saved.";
+    }
+
+    if (
+      mapPersistenceState === "saving" ||
+      brushPersistenceState === "saving" ||
+      homePersistenceState === "saving"
+    ) {
+      return "Wait until current settings are saved.";
+    }
+
+    return null;
+  }, [
+    brushPersistenceState,
+    hasPendingPaintChanges,
+    homePersistenceState,
+    homeRadiusPaintState,
+    mapPersistenceState,
+    paintPersistenceState,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -612,6 +658,118 @@ export function App() {
     })();
   }, [homeLocation, homeRadiusPaintState, mergeVisiblePaintedH3Ids]);
 
+  const reloadUserStateAfterBackupImport = useCallback(async () => {
+    const [storedMapViewState, storedBrushRadius, storedHomeLocation, visibleCells] =
+      await Promise.all([
+        loadAppState<JsonValue>(MAP_VIEW_STATE_KEY),
+        loadAppState<JsonValue>(BRUSH_RADIUS_STATE_KEY),
+        loadHomeLocation(),
+        paintedCellsViewportBbox
+          ? loadPaintedCellsInBbox({
+              ...paintedCellsViewportBbox,
+              limit: PAINTED_CELLS_VIEWPORT_QUERY_LIMIT,
+            })
+          : Promise.resolve(null),
+      ]);
+
+    const nextMapViewState = normalizeMapViewState(storedMapViewState);
+    const nextBrushRadiusMeters = normalizeBrushRadiusMeters(storedBrushRadius);
+    const nextHomeLocation = normalizeHomeLocation(storedHomeLocation);
+
+    pendingPaintH3IdsRef.current.clear();
+    pendingEraseH3IdsRef.current.clear();
+    lastPersistedMapStateSignatureRef.current =
+      getMapViewStateSignature(nextMapViewState);
+    lastPersistedBrushRadiusRef.current = nextBrushRadiusMeters;
+
+    setMapViewState(nextMapViewState);
+    setMapPersistenceState("saved");
+    setBrushRadiusMeters(nextBrushRadiusMeters);
+    setBrushPersistenceState("saved");
+    setHomeLocation(nextHomeLocation);
+    setHomePickModeEnabled(false);
+    setHomeRadiusPreviewEnabled(false);
+    setHomeRadiusPaintState("idle");
+    setHomeRadiusPaintProgress(null);
+    setHomePersistenceState("saved");
+
+    if (visibleCells) {
+      replaceVisiblePaintedH3Ids(
+        createViewportPaintedH3Ids(
+          visibleCells.cells.map((cell) => cell.h3_id),
+          pendingPaintH3IdsRef.current,
+          pendingEraseH3IdsRef.current,
+        ),
+      );
+      setPaintPersistenceState(visibleCells.truncated ? "limited" : "saved");
+    } else {
+      replaceVisiblePaintedH3Ids([]);
+      setPaintPersistenceState("idle");
+    }
+  }, [paintedCellsViewportBbox, replaceVisiblePaintedH3Ids]);
+
+  const handleExportBackup = useCallback(() => {
+    const backupBlockMessage = getBackupBlockMessage();
+
+    if (backupBlockMessage) {
+      setBackupState("error");
+      setBackupMessage(backupBlockMessage);
+      return;
+    }
+
+    setBackupState("exporting");
+    setBackupMessage(null);
+
+    void exportBackup()
+      .then((backup) => {
+        downloadBackupDocument(backup);
+        setBackupState("saved");
+        setBackupMessage("Exported");
+      })
+      .catch((error: unknown) => {
+        setBackupState("error");
+        setBackupMessage(error instanceof Error ? error.message : "Export failed.");
+      });
+  }, [getBackupBlockMessage]);
+
+  const handleImportBackupFile = useCallback(
+    (file: File) => {
+      const backupBlockMessage = getBackupBlockMessage();
+
+      if (backupBlockMessage) {
+        setBackupState("error");
+        setBackupMessage(backupBlockMessage);
+        return;
+      }
+
+      setBackupState("importing");
+      setBackupMessage(null);
+
+      void (async () => {
+        try {
+          const backup = JSON.parse(await file.text()) as BackupDocument;
+          const shouldOverwrite = window.confirm(
+            "Import backup and overwrite current map data?",
+          );
+
+          if (!shouldOverwrite) {
+            setBackupState("idle");
+            return;
+          }
+
+          await importBackupOverwrite(backup);
+          await reloadUserStateAfterBackupImport();
+          setBackupState("saved");
+          setBackupMessage("Imported");
+        } catch (error) {
+          setBackupState("error");
+          setBackupMessage(error instanceof Error ? error.message : "Import failed.");
+        }
+      })();
+    },
+    [getBackupBlockMessage, reloadUserStateAfterBackupImport],
+  );
+
   const handlePaintedCellsViewportChange = useCallback((bbox: PaintedCellsBbox) => {
     setPaintedCellsViewportBbox((currentBbox) =>
       currentBbox &&
@@ -647,6 +805,12 @@ export function App() {
     [removeVisiblePaintedH3Ids],
   );
 
+  const backupBlockMessage = getBackupBlockMessage();
+  const backupBusy =
+    backupState === "exporting" ||
+    backupState === "importing" ||
+    Boolean(backupBlockMessage);
+
   return (
     <main className="relative h-screen w-screen overflow-hidden bg-background text-foreground">
       <MapView
@@ -669,6 +833,7 @@ export function App() {
       <AppToolbar
         brushMode={brushMode}
         brushRadiusMeters={brushRadiusMeters}
+        backupBusy={backupBusy}
         hasHomeLocation={Boolean(homeLocation)}
         homePickModeEnabled={homePickModeEnabled}
         homeRadiusPainting={homeRadiusPaintState === "painting"}
@@ -676,7 +841,9 @@ export function App() {
         mapMode={mapViewState.mode}
         onBrushModeChange={handleBrushModeChange}
         onBrushRadiusChange={handleBrushRadiusChange}
+        onExportBackup={handleExportBackup}
         onGoHome={handleGoHome}
+        onImportBackupFile={handleImportBackupFile}
         onMapModeChange={handleMapModeChange}
         onRequestHomeRadiusPaint={handleRequestHomeRadiusPaint}
         onSetHomeFromCenter={handleSetHomeFromCenter}
@@ -714,7 +881,7 @@ export function App() {
         </div>
       )}
 
-      <div className="absolute bottom-4 left-4 z-10 flex items-center gap-3 rounded-lg border border-border bg-background/72 px-4 py-3 text-sm text-slate-200 shadow-2xl backdrop-blur">
+      <div className="absolute bottom-4 left-4 z-10 flex max-w-[calc(100vw-2rem)] flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border bg-background/72 px-4 py-3 text-sm text-slate-200 shadow-2xl backdrop-blur">
         <span
           className={cn(
             "h-2.5 w-2.5 rounded-full bg-amber-400",
@@ -795,9 +962,40 @@ export function App() {
                     ? "limited"
                     : "error"}
         </span>
+        <span className="text-slate-500">/</span>
+        <span>
+          Backup:{" "}
+          {backupState === "idle"
+            ? backupBlockMessage
+              ? "waiting"
+              : "ready"
+            : backupState === "exporting"
+              ? "exporting"
+              : backupState === "importing"
+                ? "importing"
+                : backupState === "saved"
+                  ? (backupMessage ?? "saved")
+                  : (backupMessage ?? "error")}
+        </span>
       </div>
     </main>
   );
+}
+
+function downloadBackupDocument(backup: BackupDocument): void {
+  const blob = new Blob([JSON.stringify(backup, null, 2)], {
+    type: "application/json",
+  });
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+
+  anchor.href = objectUrl;
+  anchor.download = `foggy-map-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  anchor.rel = "noopener";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
 }
 
 function yieldToBrowser(): Promise<void> {

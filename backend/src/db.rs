@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     error::Error,
     fmt::{self, Display, Formatter},
     fs,
@@ -7,10 +8,16 @@ use std::{
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 pub const DEFAULT_DATABASE_PATH: &str = "/data/foggy_map.sqlite3";
 pub const MIN_H3_RESOLUTION: i64 = 0;
 pub const MAX_H3_RESOLUTION: i64 = 15;
+pub const MAX_H3_ID_LEN: usize = 32;
+pub const MIN_HOME_ZOOM: f64 = 0.0;
+pub const MAX_HOME_ZOOM: f64 = 24.0;
+pub const BACKUP_FORMAT: &str = "foggy_map.backup";
+pub const BACKUP_VERSION: i64 = 1;
 const MAX_APP_STATE_KEY_LEN: usize = 64;
 
 const INITIAL_SCHEMA: &str = r#"
@@ -112,6 +119,65 @@ pub struct BboxCellsPage {
     pub truncated: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BackupDocument {
+    pub format: String,
+    pub version: i64,
+    pub exported_at: String,
+    pub app_state: Vec<BackupAppStateEntry>,
+    pub home_location: Option<HomeLocationInput>,
+    pub painted_cells: Vec<PaintCellInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BackupAppStateEntry {
+    pub key: String,
+    pub value: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BackupImportSummary {
+    pub mode: &'static str,
+    pub app_state: usize,
+    pub painted_cells: usize,
+    pub home_location: bool,
+}
+
+#[derive(Debug)]
+pub enum BackupError {
+    Sqlite(rusqlite::Error),
+    Json {
+        key: String,
+        source: serde_json::Error,
+    },
+    Validation(BackupValidationError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BackupValidationError {
+    UnsupportedFormat {
+        expected: &'static str,
+        actual: String,
+    },
+    UnsupportedVersion {
+        supported: i64,
+        actual: i64,
+    },
+    DuplicateAppStateKey {
+        key: String,
+    },
+    DuplicatePaintedCell {
+        h3_id: String,
+        resolution: i64,
+    },
+    InvalidAppStateKey {
+        key: String,
+        source: AppStateKeyError,
+    },
+    InvalidHomeLocation(String),
+    InvalidPaintedCell(String),
+}
+
 impl Display for AppStateKeyError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
@@ -130,6 +196,53 @@ impl Display for AppStateKeyError {
     }
 }
 
+impl Display for BackupValidationError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedFormat { expected, actual } => write!(
+                formatter,
+                "backup format must be '{expected}', got '{actual}'"
+            ),
+            Self::UnsupportedVersion { supported, actual } => write!(
+                formatter,
+                "backup version must be {supported}, got {actual}"
+            ),
+            Self::DuplicateAppStateKey { key } => {
+                write!(formatter, "backup contains duplicate app state key '{key}'")
+            }
+            Self::DuplicatePaintedCell { h3_id, resolution } => write!(
+                formatter,
+                "backup contains duplicate painted cell '{h3_id}' at resolution {resolution}"
+            ),
+            Self::InvalidAppStateKey { key, source } => {
+                write!(
+                    formatter,
+                    "backup app state key '{key}' is invalid: {source}"
+                )
+            }
+            Self::InvalidHomeLocation(message) => {
+                write!(formatter, "backup home location is invalid: {message}")
+            }
+            Self::InvalidPaintedCell(message) => {
+                write!(formatter, "backup painted cell is invalid: {message}")
+            }
+        }
+    }
+}
+
+impl Display for BackupError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Sqlite(error) => write!(formatter, "sqlite error: {error}"),
+            Self::Json { key, source } => write!(
+                formatter,
+                "stored app state value for key '{key}' is not valid JSON: {source}"
+            ),
+            Self::Validation(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
 impl Display for StorageError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
@@ -141,6 +254,18 @@ impl Display for StorageError {
 
 impl Error for StorageError {}
 
+impl Error for BackupValidationError {}
+
+impl Error for BackupError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Sqlite(error) => Some(error),
+            Self::Json { source, .. } => Some(source),
+            Self::Validation(error) => Some(error),
+        }
+    }
+}
+
 impl From<std::io::Error> for StorageError {
     fn from(error: std::io::Error) -> Self {
         Self::Io(error)
@@ -148,6 +273,12 @@ impl From<std::io::Error> for StorageError {
 }
 
 impl From<rusqlite::Error> for StorageError {
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Sqlite(error)
+    }
+}
+
+impl From<rusqlite::Error> for BackupError {
     fn from(error: rusqlite::Error) -> Self {
         Self::Sqlite(error)
     }
@@ -341,6 +472,167 @@ pub fn clear_home_location(connection: &Connection) -> rusqlite::Result<usize> {
     connection.execute("DELETE FROM home_location WHERE id = 1", [])
 }
 
+pub fn export_backup_document(connection: &Connection) -> Result<BackupDocument, BackupError> {
+    let exported_at = current_sqlite_timestamp(connection)?;
+    let app_state = load_backup_app_state(connection)?;
+    let home_location = load_home_location(connection)?.map(|home_location| HomeLocationInput {
+        longitude: home_location.longitude,
+        latitude: home_location.latitude,
+        zoom: home_location.zoom,
+    });
+    let painted_cells = load_backup_painted_cells(connection)?;
+
+    Ok(BackupDocument {
+        format: BACKUP_FORMAT.to_string(),
+        version: BACKUP_VERSION,
+        exported_at,
+        app_state,
+        home_location,
+        painted_cells,
+    })
+}
+
+pub fn validate_backup_document(backup: &BackupDocument) -> Result<(), BackupValidationError> {
+    if backup.format != BACKUP_FORMAT {
+        return Err(BackupValidationError::UnsupportedFormat {
+            expected: BACKUP_FORMAT,
+            actual: backup.format.clone(),
+        });
+    }
+
+    if backup.version != BACKUP_VERSION {
+        return Err(BackupValidationError::UnsupportedVersion {
+            supported: BACKUP_VERSION,
+            actual: backup.version,
+        });
+    }
+
+    let mut app_state_keys = HashSet::with_capacity(backup.app_state.len());
+
+    for entry in &backup.app_state {
+        validate_app_state_key(&entry.key).map_err(|source| {
+            BackupValidationError::InvalidAppStateKey {
+                key: entry.key.clone(),
+                source,
+            }
+        })?;
+
+        if !app_state_keys.insert(entry.key.as_str()) {
+            return Err(BackupValidationError::DuplicateAppStateKey {
+                key: entry.key.clone(),
+            });
+        }
+    }
+
+    if let Some(home_location) = &backup.home_location {
+        validate_backup_longitude(home_location.longitude, "longitude")
+            .map_err(BackupValidationError::InvalidHomeLocation)?;
+        validate_backup_latitude(home_location.latitude, "latitude")
+            .map_err(BackupValidationError::InvalidHomeLocation)?;
+
+        if let Some(zoom) = home_location.zoom {
+            if !zoom.is_finite() || !(MIN_HOME_ZOOM..=MAX_HOME_ZOOM).contains(&zoom) {
+                return Err(BackupValidationError::InvalidHomeLocation(format!(
+                    "zoom must be a finite value between {MIN_HOME_ZOOM} and {MAX_HOME_ZOOM}"
+                )));
+            }
+        }
+    }
+
+    let mut painted_cells = HashSet::with_capacity(backup.painted_cells.len());
+
+    for cell in &backup.painted_cells {
+        validate_backup_cell_identity(&cell.h3_id, cell.resolution)
+            .map_err(BackupValidationError::InvalidPaintedCell)?;
+        validate_backup_longitude(cell.centroid_lng, "centroid_lng")
+            .map_err(BackupValidationError::InvalidPaintedCell)?;
+        validate_backup_latitude(cell.centroid_lat, "centroid_lat")
+            .map_err(BackupValidationError::InvalidPaintedCell)?;
+
+        if !painted_cells.insert((cell.h3_id.as_str(), cell.resolution)) {
+            return Err(BackupValidationError::DuplicatePaintedCell {
+                h3_id: cell.h3_id.clone(),
+                resolution: cell.resolution,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+pub fn import_backup_overwrite(
+    connection: &mut Connection,
+    backup: &BackupDocument,
+) -> Result<BackupImportSummary, BackupError> {
+    validate_backup_document(backup).map_err(BackupError::Validation)?;
+
+    let transaction = connection.transaction()?;
+
+    transaction.execute("DELETE FROM app_state", [])?;
+    transaction.execute("DELETE FROM home_location", [])?;
+    transaction.execute("DELETE FROM painted_cells", [])?;
+
+    {
+        let mut statement = transaction.prepare(
+            r#"
+            INSERT INTO app_state (key, value_json)
+            VALUES (?1, ?2)
+            "#,
+        )?;
+
+        for entry in &backup.app_state {
+            let value_json = serde_json::to_string(&entry.value)
+                .expect("serialize validated backup app state value");
+            statement.execute(params![entry.key, value_json])?;
+        }
+    }
+
+    if let Some(home_location) = &backup.home_location {
+        transaction.execute(
+            r#"
+            INSERT INTO home_location (id, longitude, latitude, zoom)
+            VALUES (1, ?1, ?2, ?3)
+            "#,
+            params![
+                home_location.longitude,
+                home_location.latitude,
+                home_location.zoom
+            ],
+        )?;
+    }
+
+    {
+        let mut statement = transaction.prepare(
+            r#"
+            INSERT INTO painted_cells (
+                h3_id,
+                resolution,
+                centroid_lng,
+                centroid_lat
+            ) VALUES (?1, ?2, ?3, ?4)
+            "#,
+        )?;
+
+        for cell in &backup.painted_cells {
+            statement.execute(params![
+                cell.h3_id,
+                cell.resolution,
+                cell.centroid_lng,
+                cell.centroid_lat
+            ])?;
+        }
+    }
+
+    transaction.commit()?;
+
+    Ok(BackupImportSummary {
+        mode: "overwrite",
+        app_state: backup.app_state.len(),
+        painted_cells: backup.painted_cells.len(),
+        home_location: backup.home_location.is_some(),
+    })
+}
+
 pub fn paint_cells(
     connection: &mut Connection,
     cells: &[PaintCellInput],
@@ -455,6 +747,99 @@ fn query_cells_in_bbox(
     Ok(BboxCellsPage { cells, truncated })
 }
 
+fn current_sqlite_timestamp(connection: &Connection) -> rusqlite::Result<String> {
+    connection.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", [], |row| {
+        row.get(0)
+    })
+}
+
+fn load_backup_app_state(connection: &Connection) -> Result<Vec<BackupAppStateEntry>, BackupError> {
+    let mut statement = connection.prepare(
+        r#"
+        SELECT key, value_json
+        FROM app_state
+        ORDER BY key
+        "#,
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut entries = Vec::new();
+
+    for row in rows {
+        let (key, value_json) = row?;
+        let value = serde_json::from_str(&value_json).map_err(|source| BackupError::Json {
+            key: key.clone(),
+            source,
+        })?;
+
+        entries.push(BackupAppStateEntry { key, value });
+    }
+
+    Ok(entries)
+}
+
+fn load_backup_painted_cells(connection: &Connection) -> rusqlite::Result<Vec<PaintCellInput>> {
+    let mut statement = connection.prepare(
+        r#"
+        SELECT h3_id, resolution, centroid_lng, centroid_lat
+        FROM painted_cells
+        ORDER BY h3_id, resolution
+        "#,
+    )?;
+
+    let cells = statement
+        .query_map([], |row| {
+            Ok(PaintCellInput {
+                h3_id: row.get(0)?,
+                resolution: row.get(1)?,
+                centroid_lng: row.get(2)?,
+                centroid_lat: row.get(3)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+
+    Ok(cells)
+}
+
+fn validate_backup_cell_identity(h3_id: &str, resolution: i64) -> Result<(), String> {
+    if h3_id.is_empty() {
+        return Err("h3_id must not be empty".to_string());
+    }
+
+    if h3_id.len() > MAX_H3_ID_LEN {
+        return Err(format!("h3_id must be at most {MAX_H3_ID_LEN} characters"));
+    }
+
+    if !(MIN_H3_RESOLUTION..=MAX_H3_RESOLUTION).contains(&resolution) {
+        return Err(format!(
+            "resolution must be between {MIN_H3_RESOLUTION} and {MAX_H3_RESOLUTION}"
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_backup_longitude(value: f64, field_name: &'static str) -> Result<(), String> {
+    if !value.is_finite() || !(-180.0..=180.0).contains(&value) {
+        return Err(format!(
+            "{field_name} must be a finite longitude between -180 and 180"
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_backup_latitude(value: f64, field_name: &'static str) -> Result<(), String> {
+    if !value.is_finite() || !(-90.0..=90.0).contains(&value) {
+        return Err(format!(
+            "{field_name} must be a finite latitude between -90 and 90"
+        ));
+    }
+
+    Ok(())
+}
+
 fn read_home_location(row: &rusqlite::Row<'_>) -> rusqlite::Result<HomeLocation> {
     Ok(HomeLocation {
         longitude: row.get(0)?,
@@ -473,12 +858,15 @@ mod tests {
     };
 
     use rusqlite::{params, Connection};
+    use serde_json::json;
 
     use super::{
-        clear_home_location, erase_cells, get_cells_in_bbox_limited, initialize_connection,
-        initialize_database, load_app_state_value, load_home_location, paint_cells,
-        save_app_state_value, save_home_location, validate_app_state_key, AppStateKeyError, Bbox,
-        CellRef, HomeLocationInput, PaintCellInput,
+        clear_home_location, erase_cells, export_backup_document, get_cells_in_bbox_limited,
+        import_backup_overwrite, initialize_connection, initialize_database, load_app_state_value,
+        load_home_location, paint_cells, save_app_state_value, save_home_location,
+        validate_app_state_key, validate_backup_document, AppStateKeyError, BackupAppStateEntry,
+        BackupDocument, BackupError, BackupValidationError, Bbox, CellRef, HomeLocationInput,
+        PaintCellInput, BACKUP_FORMAT, BACKUP_VERSION,
     };
 
     #[test]
@@ -944,6 +1332,144 @@ mod tests {
         assert_eq!(row_count, 10_000);
     }
 
+    #[test]
+    fn backup_export_contains_current_user_data() {
+        let mut connection = initialized_in_memory_connection();
+
+        save_app_state_value(&connection, "map.view", r#"{"zoom":12}"#).expect("save app state");
+        save_home_location(
+            &connection,
+            &HomeLocationInput {
+                longitude: 37.6173,
+                latitude: 55.7558,
+                zoom: Some(14.0),
+            },
+        )
+        .expect("save home location");
+        paint_cells(
+            &mut connection,
+            &[paint_cell("8b2a100d2db6fff", 37.6173, 55.7558)],
+        )
+        .expect("paint cell");
+
+        let backup = export_backup_document(&connection).expect("export backup");
+
+        assert_eq!(backup.format, BACKUP_FORMAT);
+        assert_eq!(backup.version, BACKUP_VERSION);
+        assert!(!backup.exported_at.is_empty());
+        assert_eq!(
+            backup.app_state,
+            vec![BackupAppStateEntry {
+                key: "map.view".to_string(),
+                value: json!({ "zoom": 12 }),
+            }]
+        );
+        assert_eq!(
+            backup.home_location,
+            Some(HomeLocationInput {
+                longitude: 37.6173,
+                latitude: 55.7558,
+                zoom: Some(14.0),
+            })
+        );
+        assert_eq!(
+            backup.painted_cells,
+            vec![paint_cell("8b2a100d2db6fff", 37.6173, 55.7558)]
+        );
+    }
+
+    #[test]
+    fn backup_validation_rejects_duplicate_painted_cells() {
+        let mut backup = valid_backup_document();
+        backup.painted_cells = vec![
+            paint_cell("8b2a100d2db6fff", 37.6173, 55.7558),
+            paint_cell("8b2a100d2db6fff", 37.6173, 55.7558),
+        ];
+
+        let result = validate_backup_document(&backup);
+
+        assert_eq!(
+            result,
+            Err(BackupValidationError::DuplicatePaintedCell {
+                h3_id: "8b2a100d2db6fff".to_string(),
+                resolution: 11,
+            })
+        );
+    }
+
+    #[test]
+    fn backup_import_overwrite_replaces_existing_user_data() {
+        let mut connection = initialized_in_memory_connection();
+
+        save_app_state_value(&connection, "old.key", r#""old""#).expect("save old app state");
+        save_home_location(
+            &connection,
+            &HomeLocationInput {
+                longitude: 1.0,
+                latitude: 2.0,
+                zoom: Some(3.0),
+            },
+        )
+        .expect("save old home location");
+        paint_cells(&mut connection, &[paint_cell("old-cell", 1.0, 2.0)]).expect("paint old cell");
+
+        let backup = valid_backup_document();
+        let summary = import_backup_overwrite(&mut connection, &backup).expect("import backup");
+
+        assert_eq!(summary.mode, "overwrite");
+        assert_eq!(summary.app_state, 1);
+        assert_eq!(summary.painted_cells, 2);
+        assert!(summary.home_location);
+        assert_eq!(
+            load_app_state_value(&connection, "old.key").expect("load old key"),
+            None
+        );
+        assert_eq!(
+            load_app_state_value(&connection, "map.view")
+                .expect("load imported app state")
+                .expect("imported app state exists"),
+            r#"{"center":[37.6173,55.7558],"zoom":12}"#
+        );
+        assert_eq!(
+            load_home_location(&connection)
+                .expect("load imported home location")
+                .map(|home_location| (
+                    home_location.longitude,
+                    home_location.latitude,
+                    home_location.zoom
+                )),
+            Some((37.6173, 55.7558, Some(14.0)))
+        );
+        assert_eq!(count_table_rows(&connection, "painted_cells"), 2);
+    }
+
+    #[test]
+    fn backup_import_validates_before_changing_current_data() {
+        let mut connection = initialized_in_memory_connection();
+
+        save_app_state_value(&connection, "old.key", r#""old""#).expect("save old app state");
+        paint_cells(&mut connection, &[paint_cell("old-cell", 1.0, 2.0)]).expect("paint old cell");
+
+        let mut backup = valid_backup_document();
+        backup.painted_cells[0].centroid_lat = 95.0;
+
+        let result = import_backup_overwrite(&mut connection, &backup);
+
+        assert!(matches!(
+            result,
+            Err(BackupError::Validation(
+                BackupValidationError::InvalidPaintedCell(_)
+            ))
+        ));
+        assert_eq!(
+            load_app_state_value(&connection, "old.key")
+                .expect("load old app state")
+                .expect("old app state exists"),
+            r#""old""#
+        );
+        assert_eq!(count_table_rows(&connection, "painted_cells"), 1);
+    }
+
     fn temp_database_path() -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -974,6 +1500,30 @@ mod tests {
         CellRef {
             h3_id: h3_id.to_string(),
             resolution: 11,
+        }
+    }
+
+    fn valid_backup_document() -> BackupDocument {
+        BackupDocument {
+            format: BACKUP_FORMAT.to_string(),
+            version: BACKUP_VERSION,
+            exported_at: "2026-05-09T00:00:00.000Z".to_string(),
+            app_state: vec![BackupAppStateEntry {
+                key: "map.view".to_string(),
+                value: json!({
+                    "center": [37.6173, 55.7558],
+                    "zoom": 12,
+                }),
+            }],
+            home_location: Some(HomeLocationInput {
+                longitude: 37.6173,
+                latitude: 55.7558,
+                zoom: Some(14.0),
+            }),
+            painted_cells: vec![
+                paint_cell("8b2a100d2db6fff", 37.6173, 55.7558),
+                paint_cell("8b2a100d2da6fff", 37.6183, 55.7568),
+            ],
         }
     }
 

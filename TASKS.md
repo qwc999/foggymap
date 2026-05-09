@@ -27,26 +27,6 @@
 - Источники карт должны быть заменяемыми. Публичные OSM tiles можно использовать на раннем этапе разработки, но архитектура не должна быть жестко привязана к ним.
 - Спутниковый режим должен быть конфигурируемым. Предпочтительные источники - бесплатные/open варианты вроде NASA GIBS, OpenAerialMap или Sentinel/Copernicus-derived слоев. Esri World Imagery можно рассматривать только как optional-слой для личного использования с attribution и зафиксированными ограничениями.
 
-## FOG-020 - Backup Export/Import
-
-**Status:** Todo
-
-**Description:**
-Добавить локальный export/import пользовательских данных.
-
-**Acceptance:**
-- Пользователь может экспортировать SQLite-базу или стабильный app backup format.
-- Пользователь может импортировать backup с понятным overwrite/merge behavior.
-- Import валидирует backup до изменения текущих данных.
-
-**Tests:**
-Rust-тесты на backup validation и import behavior.
-
-**Notes:**
-- Перед реализацией выбрать формат: raw DB copy проще, structured archive безопаснее на долгую перспективу.
-
----
-
 ## Backlog
 
 - H3 aggregation на низких zoom через parent cells.

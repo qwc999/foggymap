@@ -9,6 +9,7 @@ describe("AppToolbar", () => {
       <AppToolbar
         brushMode="paint"
         brushRadiusMeters={45}
+        backupBusy={false}
         hasHomeLocation
         homePickModeEnabled={false}
         homeRadiusPainting={false}
@@ -17,6 +18,8 @@ describe("AppToolbar", () => {
         onBrushModeChange={vi.fn()}
         onBrushRadiusChange={vi.fn()}
         onGoHome={vi.fn()}
+        onExportBackup={vi.fn()}
+        onImportBackupFile={vi.fn()}
         onMapModeChange={vi.fn()}
         onRequestHomeRadiusPaint={vi.fn()}
         onSetHomeFromCenter={vi.fn()}
@@ -35,6 +38,9 @@ describe("AppToolbar", () => {
     expect(html).toContain('data-testid="pick-home-on-map"');
     expect(html).toContain('data-testid="home-radius-preview"');
     expect(html).toContain('data-testid="paint-home-radius"');
+    expect(html).toContain('data-testid="export-backup"');
+    expect(html).toContain('data-testid="import-backup"');
+    expect(html).toContain('data-testid="backup-file-input"');
     expect(html).toContain('data-testid="brush-size-range"');
     expect(html).toContain('data-testid="brush-size-input"');
     expect(html).toContain('value="45"');
@@ -45,6 +51,7 @@ describe("AppToolbar", () => {
       <AppToolbar
         brushMode={null}
         brushRadiusMeters={30}
+        backupBusy={false}
         hasHomeLocation={false}
         homePickModeEnabled={false}
         homeRadiusPainting={false}
@@ -53,6 +60,8 @@ describe("AppToolbar", () => {
         onBrushModeChange={vi.fn()}
         onBrushRadiusChange={vi.fn()}
         onGoHome={vi.fn()}
+        onExportBackup={vi.fn()}
+        onImportBackupFile={vi.fn()}
         onMapModeChange={vi.fn()}
         onRequestHomeRadiusPaint={vi.fn()}
         onSetHomeFromCenter={vi.fn()}
@@ -70,6 +79,7 @@ describe("AppToolbar", () => {
       <AppToolbar
         brushMode={null}
         brushRadiusMeters={30}
+        backupBusy={false}
         hasHomeLocation
         homePickModeEnabled
         homeRadiusPainting={false}
@@ -78,6 +88,8 @@ describe("AppToolbar", () => {
         onBrushModeChange={vi.fn()}
         onBrushRadiusChange={vi.fn()}
         onGoHome={vi.fn()}
+        onExportBackup={vi.fn()}
+        onImportBackupFile={vi.fn()}
         onMapModeChange={vi.fn()}
         onRequestHomeRadiusPaint={vi.fn()}
         onSetHomeFromCenter={vi.fn()}
@@ -95,6 +107,7 @@ describe("AppToolbar", () => {
       <AppToolbar
         brushMode={null}
         brushRadiusMeters={30}
+        backupBusy={false}
         hasHomeLocation
         homePickModeEnabled={false}
         homeRadiusPainting={false}
@@ -103,6 +116,8 @@ describe("AppToolbar", () => {
         onBrushModeChange={vi.fn()}
         onBrushRadiusChange={vi.fn()}
         onGoHome={vi.fn()}
+        onExportBackup={vi.fn()}
+        onImportBackupFile={vi.fn()}
         onMapModeChange={vi.fn()}
         onRequestHomeRadiusPaint={vi.fn()}
         onSetHomeFromCenter={vi.fn()}

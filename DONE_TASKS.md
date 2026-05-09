@@ -498,3 +498,33 @@ Rust-тесты на persistence home location. Frontend-тесты для state
 - Bulk painting отправляет cells в существующий paint API батчами до 10k и делает yield между batch-ами.
 - Проверено через Docker: frontend format, typecheck, Vitest, lint, build и npm audit.
 - E2E-проверка в локальном compose: headless Chrome включил preview, открыл confirmation, подтвердил bulk paint, backend получил 17 412 новых cells, frontend overlay count стал 17 412. Проверочные cells удалены, `map.view` и `home_location` восстановлены.
+
+---
+
+## FOG-020 - Backup Export/Import
+
+**Status:** Done
+
+**Description:**
+Добавить локальный export/import пользовательских данных.
+
+**Acceptance:**
+- Пользователь может экспортировать SQLite-базу или стабильный app backup format.
+- Пользователь может импортировать backup с понятным overwrite/merge behavior.
+- Import валидирует backup до изменения текущих данных.
+
+**Tests:**
+Rust-тесты на backup validation и import behavior.
+
+**Notes:**
+- Выбран стабильный JSON backup format вместо raw SQLite copy: `format = "foggy_map.backup"`, `version = 1`, `exported_at`, `app_state`, `home_location`, `painted_cells`.
+- Добавлены backend endpoints `GET /backup/export` и `POST /backup/import?mode=overwrite`; через frontend dev proxy они доступны как `/api/backup/export` и `/api/backup/import?mode=overwrite`.
+- Import пока поддерживает только понятный overwrite behavior: другие mode отклоняются `400 invalid_backup_import_mode`.
+- Backup валидируется до транзакции: format/version, app state keys, duplicate app state keys, duplicate painted cells, home coordinates/zoom, H3 id/resolution и centroid coordinates.
+- Overwrite import выполняется одной транзакцией: текущие `app_state`, `home_location` и `painted_cells` заменяются данными из backup.
+- Toolbar получил кнопки export/import. Export скачивает JSON-файл, import читает локальный JSON, требует подтверждение overwrite и после успешного импорта перезагружает пользовательское состояние из backend.
+- Import/export в UI блокируются, пока загружается или сохраняется app state/home/paint data, чтобы backup не расходился с pending changes и import не перетирался поздним save.
+- Добавлены frontend API client и тесты для backup, обновлены component tests toolbar.
+- Проверено через Docker: backend fmt, test, clippy; frontend format, typecheck, Vitest, lint, build.
+- Проверено в реальном compose-сервисе: export через backend и frontend proxy, invalid backup возвращает `400 invalid_backup` без изменения счетчика painted cells, import без `mode=overwrite` возвращает `400 invalid_backup_import_mode`.
+- Playwright CLI был проверен внутри Docker, но браузерная проверка UI не выполнена: frontend-контейнер не содержит Chrome/Chromium (`Chromium distribution 'chrome' is not found`). UI покрыт component tests и production build.

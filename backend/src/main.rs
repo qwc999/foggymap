@@ -17,9 +17,6 @@ mod db;
 const MAX_PAINTED_CELLS_BATCH_LEN: usize = 10_000;
 const DEFAULT_PAINTED_CELLS_QUERY_LIMIT: usize = 20_000;
 const MAX_PAINTED_CELLS_QUERY_LIMIT: usize = 50_000;
-const MAX_H3_ID_LEN: usize = 32;
-const MIN_HOME_ZOOM: f64 = 0.0;
-const MAX_HOME_ZOOM: f64 = 24.0;
 
 #[derive(Clone)]
 struct ApiState {
@@ -73,6 +70,11 @@ struct PaintedCellsQuery {
     limit: Option<usize>,
 }
 
+#[derive(Deserialize)]
+struct BackupImportQuery {
+    mode: Option<String>,
+}
+
 #[derive(Serialize)]
 struct PaintedCellsResponse {
     cells: Vec<db::PaintedCell>,
@@ -92,6 +94,8 @@ enum ApiError {
     InvalidHomeLocationInput(String),
     InvalidPaintedCellsInput(String),
     InvalidBbox(String),
+    InvalidBackupImportMode(String),
+    Backup(db::BackupError),
     Storage(db::StorageError),
     CorruptAppState {
         key: String,
@@ -233,6 +237,34 @@ async fn get_painted_cells_in_bbox(
     }))
 }
 
+async fn export_backup(
+    State(state): State<ApiState>,
+) -> Result<Json<db::BackupDocument>, ApiError> {
+    let connection = open_initialized_connection(&state)?;
+    let backup = db::export_backup_document(&connection).map_err(ApiError::Backup)?;
+
+    Ok(Json(backup))
+}
+
+async fn import_backup(
+    State(state): State<ApiState>,
+    Query(query): Query<BackupImportQuery>,
+    payload: Result<Json<db::BackupDocument>, JsonRejection>,
+) -> Result<Json<db::BackupImportSummary>, ApiError> {
+    if query.mode.as_deref() != Some("overwrite") {
+        return Err(ApiError::InvalidBackupImportMode(
+            "backup import requires mode=overwrite".to_string(),
+        ));
+    }
+
+    let Json(backup) = payload.map_err(ApiError::InvalidJson)?;
+    let mut connection = open_initialized_connection(&state)?;
+    let summary =
+        db::import_backup_overwrite(&mut connection, &backup).map_err(ApiError::Backup)?;
+
+    Ok(Json(summary))
+}
+
 fn open_initialized_connection(state: &ApiState) -> Result<Connection, ApiError> {
     let connection = db::open_database(state.database_path.as_ref()).map_err(ApiError::Storage)?;
     db::initialize_connection(&connection).map_err(to_storage_error)?;
@@ -271,9 +303,11 @@ fn validate_home_location_input(home_location: &db::HomeLocationInput) -> Result
     validate_home_latitude(home_location.latitude, "latitude")?;
 
     if let Some(zoom) = home_location.zoom {
-        if !zoom.is_finite() || !(MIN_HOME_ZOOM..=MAX_HOME_ZOOM).contains(&zoom) {
+        if !zoom.is_finite() || !(db::MIN_HOME_ZOOM..=db::MAX_HOME_ZOOM).contains(&zoom) {
             return Err(ApiError::InvalidHomeLocationInput(format!(
-                "zoom must be a finite value between {MIN_HOME_ZOOM} and {MAX_HOME_ZOOM}"
+                "zoom must be a finite value between {} and {}",
+                db::MIN_HOME_ZOOM,
+                db::MAX_HOME_ZOOM
             )));
         }
     }
@@ -298,9 +332,10 @@ fn validate_cell_identity(h3_id: &str, resolution: i64) -> Result<(), ApiError> 
         ));
     }
 
-    if h3_id.len() > MAX_H3_ID_LEN {
+    if h3_id.len() > db::MAX_H3_ID_LEN {
         return Err(ApiError::InvalidPaintedCellsInput(format!(
-            "h3_id must be at most {MAX_H3_ID_LEN} characters"
+            "h3_id must be at most {} characters",
+            db::MAX_H3_ID_LEN
         )));
     }
 
@@ -430,6 +465,19 @@ impl IntoResponse for ApiError {
                 message,
             ),
             Self::InvalidBbox(message) => (StatusCode::BAD_REQUEST, "invalid_bbox", message),
+            Self::InvalidBackupImportMode(message) => (
+                StatusCode::BAD_REQUEST,
+                "invalid_backup_import_mode",
+                message,
+            ),
+            Self::Backup(db::BackupError::Validation(error)) => {
+                (StatusCode::BAD_REQUEST, "invalid_backup", error.to_string())
+            }
+            Self::Backup(error) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "backup_error",
+                error.to_string(),
+            ),
             Self::Storage(error) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "storage_error",
@@ -476,6 +524,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .route("/painted-cells", get(get_painted_cells_in_bbox))
         .route("/painted-cells/paint", post(paint_cells))
         .route("/painted-cells/erase", post(erase_cells))
+        .route("/backup/export", get(export_backup))
+        .route("/backup/import", post(import_backup))
         .with_state(state)
         .layer(cors);
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;

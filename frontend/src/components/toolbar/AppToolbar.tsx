@@ -1,7 +1,8 @@
-import type { ChangeEvent } from "react";
+import { useRef, type ChangeEvent } from "react";
 import {
   Brush,
   CircleDashed,
+  Download,
   Eraser,
   Home,
   MapPinPlus,
@@ -10,6 +11,7 @@ import {
   PaintBucket,
   Ruler,
   Satellite,
+  Upload,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -27,6 +29,7 @@ interface AppToolbarProps {
   homePickModeEnabled: boolean;
   homeRadiusPreviewEnabled: boolean;
   homeRadiusPainting: boolean;
+  backupBusy: boolean;
   onMapModeChange: (mode: MapMode) => void;
   onBrushModeChange: (mode: BrushMode | null) => void;
   onBrushRadiusChange: (radiusMeters: number) => void;
@@ -35,6 +38,8 @@ interface AppToolbarProps {
   onToggleHomePickMode: () => void;
   onToggleHomeRadiusPreview: () => void;
   onRequestHomeRadiusPaint: () => void;
+  onExportBackup: () => void;
+  onImportBackupFile: (file: File) => void;
 }
 
 const iconButtonClassName = "h-9 w-9 rounded-md";
@@ -49,6 +54,7 @@ export function AppToolbar({
   homePickModeEnabled,
   homeRadiusPreviewEnabled,
   homeRadiusPainting,
+  backupBusy,
   onMapModeChange,
   onBrushModeChange,
   onBrushRadiusChange,
@@ -57,9 +63,23 @@ export function AppToolbar({
   onToggleHomePickMode,
   onToggleHomeRadiusPreview,
   onRequestHomeRadiusPaint,
+  onExportBackup,
+  onImportBackupFile,
 }: AppToolbarProps) {
+  const backupFileInputRef = useRef<HTMLInputElement | null>(null);
+
   const handleBrushRadiusChange = (event: ChangeEvent<HTMLInputElement>) => {
     onBrushRadiusChange(Number(event.currentTarget.value));
+  };
+
+  const handleBackupFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+
+    event.currentTarget.value = "";
+
+    if (file) {
+      onImportBackupFile(file);
+    }
   };
 
   return (
@@ -182,6 +202,43 @@ export function AppToolbar({
         >
           <PaintBucket className="h-4 w-4" />
         </Button>
+      </div>
+
+      <div aria-label="Backup tools" className={groupClassName} role="group">
+        <Button
+          aria-label="Export backup"
+          className={iconButtonClassName}
+          data-testid="export-backup"
+          disabled={backupBusy}
+          size="icon"
+          title="Export backup"
+          variant="secondary"
+          onClick={onExportBackup}
+        >
+          <Download className="h-4 w-4" />
+        </Button>
+        <Button
+          aria-label="Import backup"
+          className={iconButtonClassName}
+          data-testid="import-backup"
+          disabled={backupBusy}
+          size="icon"
+          title="Import backup"
+          variant="secondary"
+          onClick={() => backupFileInputRef.current?.click()}
+        >
+          <Upload className="h-4 w-4" />
+        </Button>
+        <input
+          ref={backupFileInputRef}
+          accept=".json,application/json"
+          className="sr-only"
+          data-testid="backup-file-input"
+          disabled={backupBusy}
+          tabIndex={-1}
+          type="file"
+          onChange={handleBackupFileChange}
+        />
       </div>
 
       <div
