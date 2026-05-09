@@ -42,9 +42,30 @@ interface AppToolbarProps {
   onImportBackupFile: (file: File) => void;
 }
 
-const iconButtonClassName = "h-9 w-9 rounded-md";
+const iconClassName = "h-5 w-5 shrink-0 stroke-[2.4]";
+const iconButtonBaseClassName =
+  "h-9 w-9 rounded-md border transition focus-visible:ring-cyan-300";
+const inactiveIconButtonClassName =
+  "border-white/15 bg-slate-800/95 text-slate-100 hover:border-cyan-300/45 hover:bg-slate-700 hover:text-white";
+const activeIconButtonClassName =
+  "border-cyan-200/80 bg-cyan-400 text-slate-950 shadow-sm shadow-cyan-950/30 hover:bg-cyan-300 hover:text-slate-950";
+const disabledIconButtonClassName = "border-white/10 bg-slate-900/70 text-slate-500";
 const groupClassName =
   "flex items-center gap-1 rounded-md border border-white/10 bg-slate-950/55 p-1";
+
+function getIconButtonClassName({
+  active = false,
+  disabled = false,
+}: {
+  active?: boolean;
+  disabled?: boolean;
+}) {
+  return cn(
+    iconButtonBaseClassName,
+    active ? activeIconButtonClassName : inactiveIconButtonClassName,
+    disabled && disabledIconButtonClassName,
+  );
+}
 
 export function AppToolbar({
   mapMode,
@@ -91,26 +112,26 @@ export function AppToolbar({
         <Button
           aria-label="Map"
           aria-pressed={mapMode === "street"}
-          className={iconButtonClassName}
+          className={getIconButtonClassName({ active: mapMode === "street" })}
           data-testid="street-map-mode"
           size="icon"
           title="Map"
-          variant={mapMode === "street" ? "default" : "secondary"}
+          variant="secondary"
           onClick={() => onMapModeChange("street")}
         >
-          <MapPinned className="h-4 w-4" />
+          <MapPinned className={iconClassName} />
         </Button>
         <Button
           aria-label="Satellite"
           aria-pressed={mapMode === "satellite"}
-          className={iconButtonClassName}
+          className={getIconButtonClassName({ active: mapMode === "satellite" })}
           data-testid="satellite-map-mode"
           size="icon"
           title="Satellite"
-          variant={mapMode === "satellite" ? "default" : "secondary"}
+          variant="secondary"
           onClick={() => onMapModeChange("satellite")}
         >
-          <Satellite className="h-4 w-4" />
+          <Satellite className={iconClassName} />
         </Button>
       </div>
 
@@ -118,33 +139,33 @@ export function AppToolbar({
         <Button
           aria-label="Brush"
           aria-pressed={brushMode === "paint"}
-          className={iconButtonClassName}
+          className={getIconButtonClassName({ active: brushMode === "paint" })}
           data-testid="paint-mode"
           size="icon"
           title={`Brush ${brushRadiusMeters}m`}
-          variant={brushMode === "paint" ? "default" : "secondary"}
+          variant="secondary"
           onClick={() => onBrushModeChange(brushMode === "paint" ? null : "paint")}
         >
-          <Brush className="h-4 w-4" />
+          <Brush className={iconClassName} />
         </Button>
         <Button
           aria-label="Eraser"
           aria-pressed={brushMode === "erase"}
-          className={iconButtonClassName}
+          className={getIconButtonClassName({ active: brushMode === "erase" })}
           data-testid="erase-mode"
           size="icon"
           title={`Eraser ${brushRadiusMeters}m`}
-          variant={brushMode === "erase" ? "default" : "secondary"}
+          variant="secondary"
           onClick={() => onBrushModeChange(brushMode === "erase" ? null : "erase")}
         >
-          <Eraser className="h-4 w-4" />
+          <Eraser className={iconClassName} />
         </Button>
       </div>
 
       <div aria-label="Home tools" className={groupClassName} role="group">
         <Button
           aria-label="Go home"
-          className={cn(iconButtonClassName, !hasHomeLocation && "opacity-60")}
+          className={getIconButtonClassName({ disabled: !hasHomeLocation })}
           data-testid="home-button"
           disabled={!hasHomeLocation}
           size="icon"
@@ -152,47 +173,52 @@ export function AppToolbar({
           variant="secondary"
           onClick={onGoHome}
         >
-          <Home className="h-4 w-4" />
+          <Home className={iconClassName} />
         </Button>
         <Button
           aria-label="Set home from center"
-          className={iconButtonClassName}
+          className={getIconButtonClassName({})}
           data-testid="set-home-center"
           size="icon"
           title="Set home from center"
           variant="secondary"
           onClick={onSetHomeFromCenter}
         >
-          <MapPinPlus className="h-4 w-4" />
+          <MapPinPlus className={iconClassName} />
         </Button>
         <Button
           aria-label="Pick home on map"
           aria-pressed={homePickModeEnabled}
-          className={iconButtonClassName}
+          className={getIconButtonClassName({ active: homePickModeEnabled })}
           data-testid="pick-home-on-map"
           size="icon"
           title="Pick home on map"
-          variant={homePickModeEnabled ? "default" : "secondary"}
+          variant="secondary"
           onClick={onToggleHomePickMode}
         >
-          <MousePointerClick className="h-4 w-4" />
+          <MousePointerClick className={iconClassName} />
         </Button>
         <Button
           aria-label="Show home radius"
           aria-pressed={homeRadiusPreviewEnabled}
-          className={cn(iconButtonClassName, !hasHomeLocation && "opacity-60")}
+          className={getIconButtonClassName({
+            active: homeRadiusPreviewEnabled,
+            disabled: !hasHomeLocation,
+          })}
           data-testid="home-radius-preview"
           disabled={!hasHomeLocation}
           size="icon"
           title="10km radius"
-          variant={homeRadiusPreviewEnabled ? "default" : "secondary"}
+          variant="secondary"
           onClick={onToggleHomeRadiusPreview}
         >
-          <CircleDashed className="h-4 w-4" />
+          <CircleDashed className={iconClassName} />
         </Button>
         <Button
           aria-label="Paint home radius"
-          className={cn(iconButtonClassName, !hasHomeLocation && "opacity-60")}
+          className={getIconButtonClassName({
+            disabled: !hasHomeLocation || homeRadiusPainting,
+          })}
           data-testid="paint-home-radius"
           disabled={!hasHomeLocation || homeRadiusPainting}
           size="icon"
@@ -200,14 +226,14 @@ export function AppToolbar({
           variant="secondary"
           onClick={onRequestHomeRadiusPaint}
         >
-          <PaintBucket className="h-4 w-4" />
+          <PaintBucket className={iconClassName} />
         </Button>
       </div>
 
       <div aria-label="Backup tools" className={groupClassName} role="group">
         <Button
           aria-label="Export backup"
-          className={iconButtonClassName}
+          className={getIconButtonClassName({ disabled: backupBusy })}
           data-testid="export-backup"
           disabled={backupBusy}
           size="icon"
@@ -215,11 +241,11 @@ export function AppToolbar({
           variant="secondary"
           onClick={onExportBackup}
         >
-          <Download className="h-4 w-4" />
+          <Download className={iconClassName} />
         </Button>
         <Button
           aria-label="Import backup"
-          className={iconButtonClassName}
+          className={getIconButtonClassName({ disabled: backupBusy })}
           data-testid="import-backup"
           disabled={backupBusy}
           size="icon"
@@ -227,7 +253,7 @@ export function AppToolbar({
           variant="secondary"
           onClick={() => backupFileInputRef.current?.click()}
         >
-          <Upload className="h-4 w-4" />
+          <Upload className={iconClassName} />
         </Button>
         <input
           ref={backupFileInputRef}
@@ -245,7 +271,7 @@ export function AppToolbar({
         className="flex h-11 items-center gap-2 rounded-md border border-white/10 bg-slate-950/55 px-3"
         data-testid="brush-size-control"
       >
-        <Ruler className="h-4 w-4 text-cyan-200" />
+        <Ruler className={cn(iconClassName, "text-cyan-200")} />
         <label className="sr-only" htmlFor="brush-radius-range">
           Brush size
         </label>

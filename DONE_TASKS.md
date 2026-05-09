@@ -528,3 +528,26 @@ Rust-тесты на backup validation и import behavior.
 - Проверено через Docker: backend fmt, test, clippy; frontend format, typecheck, Vitest, lint, build.
 - Проверено в реальном compose-сервисе: export через backend и frontend proxy, invalid backup возвращает `400 invalid_backup` без изменения счетчика painted cells, import без `mode=overwrite` возвращает `400 invalid_backup_import_mode`.
 - Playwright CLI был проверен внутри Docker, но браузерная проверка UI не выполнена: frontend-контейнер не содержит Chrome/Chromium (`Chromium distribution 'chrome' is not found`). UI покрыт component tests и production build.
+
+---
+
+## FOG-021 - Улучшить Видимость Кнопок Toolbar
+
+**Status:** Done
+
+**Description:**
+Кнопки управления картой сейчас плохо читаются: иконки на темных/активных кнопках почти не видны, особенно в верхней панели управления.
+
+**Acceptance:**
+- Иконки всех кнопок toolbar хорошо видны в active, inactive, disabled и hover/focus состояниях.
+- Активное состояние кнопок различимо без потери контраста иконки.
+- Toolbar остается компактным и не перекрывает важные элементы карты.
+
+**Tests:**
+Frontend component tests для toolbar states, если изменение можно проверить статически. Дополнительно визуальная проверка в браузере.
+
+**Notes:**
+- Toolbar icon buttons получили явные high-contrast состояния: active `cyan` с темной иконкой, inactive slate с белой иконкой, disabled slate с приглушенной иконкой.
+- Lucide-иконки увеличены до `h-5 w-5` и получили более толстый stroke, чтобы не пропадать на темном фоне.
+- Компонентные тесты проверяют active/disabled classes и размер иконок.
+- Проверено через Docker: frontend format, typecheck, AppToolbar tests, lint, build.

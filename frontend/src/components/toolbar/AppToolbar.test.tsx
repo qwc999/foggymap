@@ -31,6 +31,9 @@ describe("AppToolbar", () => {
     expect(html).toContain('data-testid="app-toolbar"');
     expect(html).toContain('data-testid="satellite-map-mode"');
     expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain("bg-cyan-400");
+    expect(html).toContain("text-slate-950");
+    expect(html).toContain("h-5 w-5");
     expect(html).toContain('data-testid="paint-mode"');
     expect(html).toContain('data-testid="erase-mode"');
     expect(html).toContain('data-testid="home-button"');
@@ -72,6 +75,7 @@ describe("AppToolbar", () => {
 
     expect(html).toContain('data-testid="home-button"');
     expect(html).toContain("disabled");
+    expect(html).toContain("text-slate-500");
   });
 
   it("marks map picking as active when requested", () => {
